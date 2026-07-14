@@ -55,5 +55,5 @@ if (watch) {
   console.log('Tab Zero extension: watching src/ …');
 } else {
   await Promise.all([build(opts), build(contentOpts)]);
-  console.log('Tab Zero extension built -> packages/extension/dist/');
+  console.log('Tab Zero extension built -> extension/dist/');
 }

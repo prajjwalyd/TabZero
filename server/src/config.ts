@@ -2,11 +2,11 @@ import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** Walk up from a starting dir to find the repo root (marked by PLAN.md / .env). */
+/** Walk up from a starting dir to find the repo root (marked by tsconfig.base.json, committed & root-only). */
 function findRoot(start: string): string {
   let dir = start;
-  for (let i = 0; i < 10; i++) {
-    if (existsSync(join(dir, 'PLAN.md')) || existsSync(join(dir, 'pnpm-workspace.yaml'))) return dir;
+  for (let i = 0; i < 12; i++) {
+    if (existsSync(join(dir, 'tsconfig.base.json'))) return dir;
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
@@ -17,7 +17,7 @@ function findRoot(start: string): string {
 const here = dirname(fileURLToPath(import.meta.url));
 export const ROOT =
   process.env.TABZERO_ROOT ||
-  (existsSync(join(process.cwd(), 'PLAN.md')) ? process.cwd() : findRoot(here));
+  (existsSync(join(process.cwd(), 'tsconfig.base.json')) ? process.cwd() : findRoot(here));
 
 /** Minimal .env loader — does not override values already in the environment. */
 function loadEnv(root: string): void {

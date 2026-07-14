@@ -56,7 +56,7 @@ Create these two topics at [console.weaviate.cloud/engram](https://console.weavi
 pnpm install
 
 # build the server (for the MCP entrypoint) and the extension
-pnpm --filter @tabzero/server build
+pnpm build:server
 pnpm build:ext
 
 # start the backend daemon (keep this running)
@@ -67,7 +67,7 @@ pnpm backend
 
 1. Open `chrome://extensions` (works in Chrome, Edge, Brave, Arc…).
 2. Enable **Developer mode**.
-3. **Load unpacked** → select `packages/extension/dist`.
+3. **Load unpacked** → select `extension/dist`.
 4. Pin **Tab Zero** and click it. Browse a bit; trails appear automatically.
 
 Dev loop: `pnpm watch:ext` (rebuild on change) + `pnpm backend:dev` (restart on change).
@@ -78,7 +78,7 @@ Dev loop: `pnpm watch:ext` (rebuild on change) + `pnpm backend:dev` (restart on 
 
 The MCP server exposes four tools: `search_trails`, `get_trail`, `resurrect_trail`, `week_in_tabs`. Transport is **stdio** (works across every harness).
 
-> Run `pnpm --filter @tabzero/server build` once so `dist/mcp.js` exists.
+> Run `pnpm build:server` once so `server/dist/mcp.js` exists.
 
 **Claude Code** — already wired via [`.mcp.json`](.mcp.json) in this repo. Just run `claude` here and try:
 > *"resurrect my GPU pricing research"* · *"what's my most abandoned trail this week?"*
@@ -87,12 +87,12 @@ The MCP server exposes four tools: `search_trails`, `get_trail`, `resurrect_trai
 ```toml
 [mcp_servers.tabzero]
 command = "node"
-args = ["/ABSOLUTE/PATH/TO/TabZero/packages/server/dist/mcp.js"]
+args = ["/ABSOLUTE/PATH/TO/TabZero/server/dist/mcp.js"]
 ```
 
 **opencode** — add to `opencode.json`:
 ```jsonc
-{ "mcp": { "tabzero": { "type": "local", "command": ["node", "/ABSOLUTE/PATH/TO/TabZero/packages/server/dist/mcp.js"] } } }
+{ "mcp": { "tabzero": { "type": "local", "command": ["node", "/ABSOLUTE/PATH/TO/TabZero/server/dist/mcp.js"] } } }
 ```
 
 ---
@@ -105,7 +105,7 @@ args = ["/ABSOLUTE/PATH/TO/TabZero/packages/server/dist/mcp.js"]
 | `OPENROUTER_API_KEY` | — | Use OpenRouter for LLM instead of local `claude` |
 | `OPENROUTER_MODEL` | `deepseek/deepseek-v4-flash` | Chat model when using OpenRouter |
 | `TABZERO_CLAUDE_MODEL` | `haiku` | Model alias for the local `claude -p` path |
-| `TABZERO_PORT` | `8787` | Daemon port (also update `packages/extension/src/config.ts`) |
+| `TABZERO_PORT` | `8787` | Daemon port (also update `extension/src/config.ts`) |
 | `TABZERO_TOKEN` | `tabzero-dev` | Shared secret between extension and daemon |
 
 Data lives in `./.tabzero/tabzero.db` (SQLite, WAL). Because it's the source of truth, your Engram project is fully rebuildable by replaying it.
@@ -115,9 +115,9 @@ Data lives in `./.tabzero/tabzero.db` (SQLite, WAL). Because it's the source of 
 ## Repo layout
 
 ```
-packages/server      Node daemon + trail engine + Engram client + MCP server (TypeScript)
-packages/extension   MV3 extension: capture (background) + popup UI (TypeScript, esbuild)
-PLAN.md              Full design doc + research + sources
+server      Node daemon + trail engine + Engram client + MCP server (TypeScript)
+extension   MV3 extension: capture (background) + popup UI (TypeScript, esbuild)
+PLAN.md     Full design doc + research + sources
 ```
 
 ## Privacy

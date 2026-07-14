@@ -15,7 +15,7 @@ interface Trail {
 interface Hit { trail: Trail; why: 'semantic' | 'keyword'; snippet?: string }
 interface Stat { key: string; label: string; value: string; detail?: string }
 
-// Display order + labels for category grouping (mirrors packages/server/src/categories.ts).
+// Display order + labels for category grouping (mirrors server/src/categories.ts).
 const CAT_ORDER = ['dev', 'learning', 'news', 'social', 'media', 'shopping', 'travel', 'finance', 'work', 'projects', 'general'];
 const CAT_LABEL: Record<string, string> = {
   dev: 'Code & Docs', learning: 'Learning & Research', news: 'News & Reading', social: 'Social',

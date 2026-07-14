@@ -2,15 +2,31 @@
   "name": "tabzero",
   "private": true,
   "version": "0.1.0",
+  "type": "module",
   "description": "Close every tab guilt-free. Your browser remembers why and any agent can resurrect it. Built on Weaviate Engram.",
   "packageManager": "pnpm@10.34.1",
   "scripts": {
-    "backend": "pnpm --filter @tabzero/server start",
-    "backend:dev": "pnpm --filter @tabzero/server dev",
-    "mcp": "pnpm --filter @tabzero/server mcp",
-    "seed": "pnpm --filter @tabzero/server seed",
-    "build:ext": "pnpm --filter @tabzero/extension build",
-    "watch:ext": "pnpm --filter @tabzero/extension watch",
-    "typecheck": "pnpm -r typecheck"
+    "backend": "NODE_NO_WARNINGS=1 tsx server/src/index.ts",
+    "backend:dev": "NODE_NO_WARNINGS=1 tsx watch server/src/index.ts",
+    "mcp": "NODE_NO_WARNINGS=1 tsx server/src/mcp.ts",
+    "seed": "NODE_NO_WARNINGS=1 tsx server/src/seed.ts",
+    "build:server": "tsc -p server/tsconfig.json",
+    "build:ext": "cd extension && node build.mjs",
+    "watch:ext": "cd extension && node build.mjs --watch",
+    "build": "pnpm run build:server && pnpm run build:ext",
+    "typecheck": "tsc -p server/tsconfig.json --noEmit && tsc -p extension/tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@phosphor-icons/core": "^2.1.1",
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/chrome": "latest",
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
   }
 }
