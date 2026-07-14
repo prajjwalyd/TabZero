@@ -1,0 +1,16 @@
+{
+  "name": "tabzero",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Close every tab guilt-free. Your browser remembers why and any agent can resurrect it. Built on Weaviate Engram.",
+  "packageManager": "pnpm@10.34.1",
+  "scripts": {
+    "backend": "pnpm --filter @tabzero/server start",
+    "backend:dev": "pnpm --filter @tabzero/server dev",
+    "mcp": "pnpm --filter @tabzero/server mcp",
+    "seed": "pnpm --filter @tabzero/server seed",
+    "build:ext": "pnpm --filter @tabzero/extension build",
+    "watch:ext": "pnpm --filter @tabzero/extension watch",
+    "typecheck": "pnpm -r typecheck"
+  }
+}

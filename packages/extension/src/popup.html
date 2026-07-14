@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="popup.css" />
+    <title>Tab Zero</title>
+  </head>
+  <body>
+    <header class="hdr">
+      <div class="brand">
+        <span class="brand-mark" id="brandMark"></span>
+        <span class="brand-name">Tab Zero</span>
+      </div>
+      <div class="hdr-right">
+        <button id="refreshBtn" class="icon-btn" title="Refresh" aria-label="Refresh"></button>
+        <span class="status down" id="status" title="connecting…"></span>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div class="hero-count" id="tabCount">–</div>
+      <div class="hero-label">tabs open</div>
+      <button id="nukeBtn" class="btn-primary">Reach Tab Zero</button>
+      <div class="hero-sub">Close them all (nothing is lost 😉)</div>
+    </section>
+
+    <nav class="segmented">
+      <button class="seg active" data-view="trails">Trails</button>
+      <button class="seg" data-view="week">This week</button>
+    </nav>
+
+    <div class="search" id="searchWrap">
+      <div class="search-box">
+        <span class="search-ico" id="searchIco"></span>
+        <input id="search" type="text" spellcheck="false" placeholder="Resurrect a trail…" />
+      </div>
+    </div>
+
+    <div class="list-bar" id="listBar" style="display:none">
+      <span class="list-count" id="listCount"></span>
+      <button class="group-toggle" id="groupToggle" title="Group by category">
+        <span class="gt-ico" id="gtIco"></span><span>Group</span>
+      </button>
+    </div>
+
+    <main id="main"></main>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

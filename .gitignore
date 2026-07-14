@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.output/
+.tabzero/
+*.log
+.DS_Store
+# keep .env out of git — it holds ENGRAM_API_KEY
+.env
+PLAN.md
+
