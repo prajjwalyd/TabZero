@@ -10,7 +10,7 @@
 // Run with the daemon STOPPED so there's no write contention on the SQLite file.
 import { db, getUserId } from './db.js';
 import { ingestEvent } from './pipeline.js';
-import { enrichLabels, enrichSummaries } from './sync.js';
+import { labelTrail, summarizeTrail } from './trails.js';
 
 const RESET = process.argv.includes('--reset');
 const ENRICH = process.argv.includes('--enrich');
@@ -121,9 +121,12 @@ console.log(`[seed] user ${getUserId()} — ${pages.c} pages across ${trails.c} 
 
 if (ENRICH) {
   console.log('[seed] enriching labels + summaries via the LLM (this makes a few model calls)…');
-  let n: number;
-  do { n = await enrichLabels(5); } while (n > 0);
-  do { n = await enrichSummaries(5); } while (n > 0);
+  // Seed runs with the daemon stopped, so enrich every trail directly — no settle gate to respect.
+  const ids = db.prepare('SELECT id FROM trails WHERE page_count >= 2 ORDER BY last_active DESC').all() as { id: string }[];
+  for (const { id } of ids) {
+    await labelTrail(id);
+    await summarizeTrail(id, { force: true });
+  }
   const rows = db.prepare('SELECT label, category, page_count FROM trails WHERE page_count >= 2 ORDER BY last_active DESC').all() as
     { label: string; category: string | null; page_count: number }[];
   console.log('[seed] trails:');

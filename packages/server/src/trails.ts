@@ -90,6 +90,26 @@ export function trailUrls(id: string): string[] {
   return rows.map((r) => r.url);
 }
 
+/**
+ * URLs to actually reopen when resurrecting. Prefers the working set from the most recent
+ * "tab zero" checkpoint that included this trail — i.e. the tabs you had open together last time
+ * you set the topic down — and falls back to the trail's full history if it was never checkpointed.
+ */
+export function resurrectUrls(id: string): string[] {
+  const cp = db.prepare('SELECT MAX(checkpoint_id) m FROM checkpoint_pages WHERE trail_id = ?')
+    .get(id) as { m: number | null } | undefined;
+  if (cp?.m) {
+    const rows = db.prepare(
+      `SELECT p.url FROM checkpoint_pages cx
+         JOIN pages p ON p.canonical_url = cx.canonical_url
+        WHERE cx.checkpoint_id = ? AND cx.trail_id = ?
+        ORDER BY p.last_seen ASC`,
+    ).all(cp.m, id) as { url: string }[];
+    if (rows.length) return rows.map((r) => r.url);
+  }
+  return trailUrls(id);
+}
+
 export async function getTrailDetail(id: string, opts: { summarize?: boolean } = {}): Promise<TrailDetail | null> {
   const t = getTrail(id);
   if (!t) return null;

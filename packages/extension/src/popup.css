@@ -5,8 +5,8 @@
   --border: #E5E2D9;
   --border-2: #DAD6CB;
   --ink: #21231D;
-  --muted: #78766B;
-  --faint: #A2A093;
+  --muted: #5C5A50;
+  --faint: #7E7C6C;
   --accent: #3E5540;
   --accent-hover: #324635;
   --accent-tint: #EAEDE4;
@@ -90,7 +90,7 @@ main::-webkit-scrollbar-thumb:hover { background: #CFCBBE; }
 
 /* list bar (count + group toggle) */
 .list-bar { display: flex; align-items: center; justify-content: space-between; padding: 6px 18px 8px; }
-.list-count { font-size: 11px; color: var(--faint); letter-spacing: .2px; }
+.list-count { font-size: 13px; font-weight: 500; color: var(--muted); letter-spacing: .1px; }
 .group-toggle { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border: 1px solid var(--border); border-radius: 7px; background: none; color: var(--muted); font-family: var(--sans); font-size: 11px; font-weight: 550; cursor: pointer; transition: color .15s, background .15s, border-color .15s; }
 .group-toggle:hover { border-color: var(--border-2); color: var(--ink); }
 .group-toggle.active { background: var(--accent-tint); border-color: var(--accent-tint); color: var(--accent); }
@@ -113,7 +113,10 @@ main::-webkit-scrollbar-thumb:hover { background: #CFCBBE; }
 .trail.dormant .dot { background: var(--dormant); box-shadow: 0 0 0 3px rgba(0,0,0,.04); }
 .trail-h { flex: 1; min-width: 0; }
 .trail-label { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13.5px; font-weight: 600; letter-spacing: -0.1px; }
-.badge { font-size: 9px; letter-spacing: .6px; text-transform: uppercase; color: var(--accent); background: var(--accent-tint); padding: 1px 6px; border-radius: 5px; font-weight: 600; }
+.match-tag { display: inline-flex; align-items: center; gap: 4px; flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; line-height: 1; }
+.match-tag svg { width: 12px; height: 12px; }
+.match-tag.via-memory { color: var(--accent); }
+.match-tag.via-keyword { color: var(--faint); }
 /* full-width rows, indented (dot 7px + gap 10px) to line up under the title */
 .trail-one { margin-top: 8px; padding-left: 17px; font-size: 12px; color: var(--muted); line-height: 1.45; }
 .resurrect {
@@ -123,7 +126,8 @@ main::-webkit-scrollbar-thumb:hover { background: #CFCBBE; }
 }
 .resurrect:hover { background: var(--accent-tint); border-color: var(--accent-tint); }
 .resurrect:disabled { opacity: .55; }
-.trail-meta { margin-top: 8px; padding-left: 17px; font-size: 10.5px; color: var(--faint); letter-spacing: .2px; }
+.trail-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; padding-left: 17px; font-size: 10.5px; color: var(--faint); letter-spacing: .2px; }
+.meta-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .trail-detail { margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--border); }
 .summary { font-size: 12.5px; line-height: 1.6; color: #3B3C35; }
 .summary.loading { color: var(--faint); font-style: italic; animation: tz-pulse 1.3s ease-in-out infinite; }

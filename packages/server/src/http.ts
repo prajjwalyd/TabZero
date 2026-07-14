@@ -3,10 +3,11 @@ import { HOST, PORT, TOKEN, ENGRAM_ENABLED } from './config.js';
 import { db, getUserId } from './db.js';
 import { ingestEvent } from './pipeline.js';
 import {
-  listTrails, getTrailDetail, getTrail, trailUrls, searchTrails, weekInTabs, summarizeTrail,
+  listTrails, getTrailDetail, getTrail, resurrectUrls, searchTrails, weekInTabs, summarizeTrail,
 } from './trails.js';
 import { LLM_BACKEND } from './llm.js';
-import { flushEngram } from './sync.js';
+import { zeroCheckpoint } from './checkpoint.js';
+import { noteActivity } from './scheduler.js';
 import type { TabEventInput } from './types.js';
 
 function send(res: http.ServerResponse, code: number, body: unknown): void {
@@ -63,6 +64,7 @@ export function startHttp(): http.Server {
         for (const e of events) {
           try { ingestEvent(e); n++; } catch (err) { console.error('[ingest]', (err as Error).message); }
         }
+        if (n) noteActivity(); // kick the scheduler back to base cadence
         return send(res, 200, { ok: true, count: n });
       }
 
@@ -82,7 +84,7 @@ export function startHttp(): http.Server {
         const t = getTrail(rm[1]);
         if (!t) return send(res, 404, { error: 'not found' });
         const summary = await summarizeTrail(rm[1]);
-        return send(res, 200, { id: rm[1], label: t.label, summary, urls: trailUrls(rm[1]) });
+        return send(res, 200, { id: rm[1], label: t.label, summary, urls: resurrectUrls(rm[1]) });
       }
 
       if (req.method === 'POST' && path === '/search') {
@@ -97,13 +99,11 @@ export function startHttp(): http.Server {
       }
 
       if (req.method === 'POST' && path === '/zero') {
-        const pushed = await flushEngram(50);
-        return send(res, 200, {
-          ok: true,
-          trailCount: count('SELECT COUNT(*) c FROM trails WHERE page_count >= 2'),
-          pushedToEngram: pushed,
-          trails: listTrails({ limit: 8 }),
-        });
+        const body = await readBody(req);
+        const openUrls: string[] = Array.isArray(body?.openUrls)
+          ? body.openUrls.filter((u: unknown): u is string => typeof u === 'string')
+          : [];
+        return send(res, 200, await zeroCheckpoint(openUrls));
       }
 
       return send(res, 404, { error: 'not found' });

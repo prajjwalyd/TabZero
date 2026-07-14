@@ -60,6 +60,22 @@ CREATE TABLE IF NOT EXISTS trails (
 );
 CREATE INDEX IF NOT EXISTS idx_trails_active ON trails(last_active);
 
+-- A checkpoint is the working set at the moment the user hit "tab zero": the exact tabs that were
+-- open together. Resurrection prefers this over a trail's full history, so reopening restores what
+-- you actually had open last time you set the topic down — not every URL the trail ever touched.
+CREATE TABLE IF NOT EXISTS checkpoints (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts           INTEGER NOT NULL,
+  closed_count INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS checkpoint_pages (
+  checkpoint_id INTEGER NOT NULL,
+  canonical_url TEXT NOT NULL,
+  trail_id      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cp_pages_cp    ON checkpoint_pages(checkpoint_id);
+CREATE INDEX IF NOT EXISTS idx_cp_pages_trail ON checkpoint_pages(trail_id);
+
 CREATE TABLE IF NOT EXISTS meta ( key TEXT PRIMARY KEY, value TEXT );
 `);
 
@@ -73,6 +89,12 @@ if (!pageCols.some((c) => c.name === 'description')) {
 const trailCols = db.prepare('PRAGMA table_info(trails)').all() as unknown as { name: string }[];
 if (!trailCols.some((c) => c.name === 'category')) {
   db.exec('ALTER TABLE trails ADD COLUMN category TEXT');
+}
+
+// Migration: track the last successful Engram push per trail so the background loop can rate-limit
+// re-pushes and stay inside the free-tier pipeline budget.
+if (!trailCols.some((c) => c.name === 'last_engram_push')) {
+  db.exec('ALTER TABLE trails ADD COLUMN last_engram_push INTEGER');
 }
 
 export function getMeta(key: string): string | null {

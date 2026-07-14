@@ -67,3 +67,14 @@ export const MIN_TRAIL_PAGES = 2; // pages needed to graduate forming -> live
 export const DECAY_HALFLIFE_DAYS = 7;
 export const DORMANT_AFTER_DAYS = 3;
 export const ARCHIVE_AFTER_DAYS = 30;
+
+// Enrichment scheduling — decouple *when a trail is eligible* from *how often loops wake*.
+// The settle gate is the keystone: an actively-growing trail is re-dirtied on every navigation,
+// so we only spend an LLM/Engram call once it has been quiet for a beat. This kills the churn
+// where a trail was re-labelled/re-pushed on every partial state, without hurting responsiveness
+// (the provisional label shows instantly; only the polished version waits for the settle).
+export const TRAIL_SETTLE_MS = 25 * 1000; // a trail must be quiet this long before LLM/Engram touch it
+export const ENGRAM_MIN_REPUSH_MS = 10 * 60 * 1000; // background loop won't re-push the same trail faster than this (protects the free-tier 1k runs/mo)
+export const ENRICH_INTERVAL_MS = 20 * 1000; // base cadence for the merged label+recap pass
+export const ENGRAM_INTERVAL_MS = 90 * 1000; // base cadence for the Engram flush
+export const IDLE_BACKOFF_MAX_MS = 5 * 60 * 1000; // cap the exponential backoff when the browser is quiet

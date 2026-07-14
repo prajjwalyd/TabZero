@@ -87,12 +87,22 @@ async function doNuke(): Promise<{ closed: number; trails: number }> {
     const h = await (await fetch(`${BACKEND}/health`, { headers: { 'x-tabzero-token': TOKEN } })).json();
     trails = h?.trails ?? 0;
   } catch { /* daemon down — still close the tabs */ }
-  // flush reconciled memory to Engram without blocking the nuke
-  void fetch(`${BACKEND}/zero`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-tabzero-token': TOKEN } }).catch(() => {});
 
   const tabs = await chrome.tabs.query({});
-  const ids = tabs.filter((t) => t.id != null && !t.pinned && t.url !== chrome.runtime.getURL('zero.html')).map((t) => t.id!) as number[];
+  const zeroUrl = chrome.runtime.getURL('zero.html');
+  const ids = tabs.filter((t) => t.id != null && !t.pinned && t.url !== zeroUrl).map((t) => t.id!) as number[];
   const closed = ids.length;
+
+  // Snapshot the working set (the http(s) tabs open right now) so the server can checkpoint them,
+  // finalize their trails, and flush to Engram. Fire-and-forget — it must not block the nuke.
+  const openUrls = tabs
+    .map((t) => t.url)
+    .filter((u): u is string => !!u && /^https?:/.test(u) && u !== zeroUrl);
+  void fetch(`${BACKEND}/zero`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-tabzero-token': TOKEN },
+    body: JSON.stringify({ openUrls }),
+  }).catch(() => {});
   const url = chrome.runtime.getURL(`zero.html?closed=${closed}&trails=${trails}`);
   const fresh = await chrome.tabs.create({ url, active: true });
   const toRemove = ids.filter((id) => id !== fresh.id);

@@ -160,12 +160,13 @@ function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLE
   const row = el('div', 'trail ' + t.status);
 
   const top = el('div', 'trail-top');
-  top.appendChild(el('span', 'dot'));
+  const dot = el('span', 'dot');
+  dot.title = t.status === 'dormant' ? 'Dormant trail — no recent activity' : 'Live trail — recently active';
+  top.appendChild(dot);
 
   const h = el('div', 'trail-h');
   const label = el('div', 'trail-label');
   label.append(document.createTextNode(t.label));
-  if (why) label.appendChild(el('span', 'badge', why === 'semantic' ? 'memory' : 'match'));
   h.appendChild(label);
   // The category pill gets its own line so every card lines up regardless of title length.
   if (pill && t.category) {
@@ -184,7 +185,19 @@ function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLE
   // One-liner + meta are full-width rows (indented to the title) so text isn't boxed into the
   // narrow column beside the Resurrect button.
   if (t.oneLiner) row.appendChild(el('div', 'trail-one', t.oneLiner));
-  row.appendChild(el('div', 'trail-meta', `${t.pageCount} pages · ${t.topDomain || '—'} · ${rel(t.lastActive)}`));
+  const meta = el('div', 'trail-meta');
+  meta.appendChild(el('span', 'meta-text', `${t.pageCount} pages · ${t.topDomain || '—'} · ${rel(t.lastActive)}`));
+  // How this result surfaced (search only): semantic = Engram memory (highlighted), else keyword.
+  if (why) {
+    const tag = el('span', 'match-tag ' + (why === 'semantic' ? 'via-memory' : 'via-keyword'));
+    tag.innerHTML = iconSvg(why === 'semantic' ? 'sparkle' : 'search', 11) +
+      `<span>${why === 'semantic' ? 'memory' : 'keyword'}</span>`;
+    tag.title = why === 'semantic'
+      ? 'Surfaced by Engram semantic memory — matched by meaning'
+      : 'Matched a keyword in this trail';
+    meta.appendChild(tag);
+  }
+  row.appendChild(meta);
 
   const detail = el('div', 'trail-detail');
   detail.style.display = 'none';

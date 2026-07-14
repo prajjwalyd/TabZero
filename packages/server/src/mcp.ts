@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { getUserId } from './db.js';
-import { searchTrails, getTrailDetail, getTrail, trailUrls, summarizeTrail, weekInTabs } from './trails.js';
+import { searchTrails, getTrailDetail, getTrail, resurrectUrls, summarizeTrail, weekInTabs } from './trails.js';
 import { CATEGORY_KEYS, CATEGORY_LABEL, coerceCategory } from './categories.js';
 
 function text(obj: unknown) {
@@ -66,7 +66,7 @@ server.tool(
     if (!id) return text({ error: 'no matching trail found' });
     const t = getTrail(id)!;
     const summary = await summarizeTrail(id);
-    return text({ id, label: t.label, summary, urls: trailUrls(id) });
+    return text({ id, label: t.label, summary, urls: resurrectUrls(id) });
   },
 );
 

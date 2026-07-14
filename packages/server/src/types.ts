@@ -46,6 +46,7 @@ export interface TrailRow {
   label_dirty: number;
   engram_dirty: number;
   engram_ref: string | null;
+  last_engram_push: number | null; // ts of last successful Engram push; gates background re-push cadence
   centroid: string; // JSON Record<string, number>
   page_count: number;
   session_count: number;

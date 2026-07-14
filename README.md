@@ -103,7 +103,7 @@ args = ["/ABSOLUTE/PATH/TO/TabZero/packages/server/dist/mcp.js"]
 |---|---|---|
 | `ENGRAM_API_KEY` | — | Weaviate Engram key (reconciled memory) |
 | `OPENROUTER_API_KEY` | — | Use OpenRouter for LLM instead of local `claude` |
-| `OPENROUTER_MODEL` | `openai/gpt-4o-mini` | Chat model when using OpenRouter |
+| `OPENROUTER_MODEL` | `deepseek/deepseek-v4-flash` | Chat model when using OpenRouter |
 | `TABZERO_CLAUDE_MODEL` | `haiku` | Model alias for the local `claude -p` path |
 | `TABZERO_PORT` | `8787` | Daemon port (also update `packages/extension/src/config.ts`) |
 | `TABZERO_TOKEN` | `tabzero-dev` | Shared secret between extension and daemon |
