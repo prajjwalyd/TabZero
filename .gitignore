@@ -7,4 +7,4 @@ dist/
 # keep .env out of git — it holds ENGRAM_API_KEY
 .env
 PLAN.md
-
+docs/notes/

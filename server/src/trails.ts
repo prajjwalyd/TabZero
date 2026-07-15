@@ -235,26 +235,19 @@ export async function searchTrails(
   userId: string,
   query: string,
   limit = 5,
-  opts: { category?: string } = {},
 ): Promise<TrailSearchHit[]> {
-  const cat = opts.category || undefined;
-  const inCat = (h: TrailSearchHit) => !cat || h.trail.category === cat;
-
-  // Empty query = "list my trails" (optionally within one category), ranked by liveness.
+  // Empty query = "list my trails", ranked by liveness.
   if (!query.trim()) {
     return listTrails({})
       .map((d): TrailSearchHit => ({ trail: d, why: 'list' }))
-      .filter(inCat)
       .slice(0, limit);
   }
 
   const out = new Map<string, TrailSearchHit>();
   const now = Date.now();
-  // Widen the candidate pool when filtering, so a category still yields ~limit results.
-  const pool = cat ? Math.max(limit * 5, 25) : limit;
 
   // Local keyword first — precise for literal terms in labels/summaries.
-  for (const d of searchLocal(query, pool)) {
+  for (const d of searchLocal(query, limit)) {
     out.set(d.id, { trail: d, why: 'keyword' });
   }
   // Engram semantic fills the rest — catches matches worded differently than the trail.
@@ -263,7 +256,7 @@ export async function searchTrails(
     const t = getTrail(hit.trailId);
     if (t && !out.has(t.id)) out.set(t.id, { trail: toDTO(t, now), why: 'semantic', snippet: hit.content?.slice(0, 200) });
   }
-  return [...out.values()].filter(inCat).slice(0, limit);
+  return [...out.values()].slice(0, limit);
 }
 
 // ---------- cross-trail research interests (locally GATED, Engram-synthesized) ----------

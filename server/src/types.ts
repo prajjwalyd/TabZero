@@ -1,7 +1,7 @@
 // Domain types shared across the backend + MCP server.
 // The extension talks to us over JSON so it keeps its own copy of the wire shapes.
 
-export type EventType = 'open' | 'activate' | 'navigate' | 'update' | 'close' | 'meta';
+export type EventType = 'open' | 'activate' | 'navigate' | 'close' | 'meta';
 
 /** What the extension POSTs to /events. */
 export interface TabEventInput {

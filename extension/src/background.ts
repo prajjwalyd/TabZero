@@ -4,7 +4,7 @@ import { BACKEND, TOKEN } from './config.js';
 
 interface Ev {
   ts: number;
-  type: 'open' | 'navigate' | 'update' | 'activate' | 'close' | 'meta';
+  type: 'open' | 'navigate' | 'activate' | 'close' | 'meta';
   tabId: number;
   openerTabId?: number | null;
   windowId?: number | null;

@@ -22,7 +22,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot =
   process.env.TABZERO_ROOT ||
   (existsSync(join(process.cwd(), 'tsconfig.base.json')) ? process.cwd() : findRepoRoot(here));
-export const ROOT = repoRoot || homedir();
 
 /** Minimal .env loader — does not override values already in the environment. */
 function loadEnv(p: string): void {
@@ -77,10 +76,8 @@ export const CLAUDE_MODEL = process.env.TABZERO_CLAUDE_MODEL || 'haiku';
 
 // Trail-engine tuning
 export const ASSIGN_THRESHOLD = 0.26; // min lexical cosine to join an existing trail
-export const OPENER_BONUS = 0.6; // link-spawned tab almost always belongs to the opener's trail
 export const RECENCY_WINDOW_MS = 30 * 60 * 1000;
 export const RECENCY_BONUS = 0.15;
-export const DOMAIN_BONUS = 0.1;
 export const MIN_TRAIL_PAGES = 2; // pages needed to graduate forming -> live
 export const DECAY_HALFLIFE_DAYS = 7;
 export const DORMANT_AFTER_DAYS = 3;

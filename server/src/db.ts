@@ -112,12 +112,13 @@ if (!trailCols.some((c) => c.name === 'summary_source')) {
   db.exec('ALTER TABLE trails ADD COLUMN summary_source TEXT');
 }
 
-export function getMeta(key: string): string | null {
+// Generic key/value on the `meta` table — currently only backs the stored user_id below.
+function getMeta(key: string): string | null {
   const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | undefined;
   return row?.value ?? null;
 }
 
-export function setMeta(key: string, value: string): void {
+function setMeta(key: string, value: string): void {
   db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, value);
 }
 

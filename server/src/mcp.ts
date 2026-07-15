@@ -6,7 +6,6 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { getUserId } from './db.js';
 import { searchTrails, getTrailDetail, getTrail, resurrectUrls, summarizeTrail, weekInTabs, getInterests } from './trails.js';
-import { categoryPromptList, coerceToExisting } from './categories.js';
 
 function text(obj: unknown) {
   return { content: [{ type: 'text' as const, text: typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2) }] };
@@ -14,21 +13,16 @@ function text(obj: unknown) {
 
 const server = new McpServer({ name: 'tabzero', version: '0.1.0' });
 
-const CATEGORY_HELP = categoryPromptList();
-
 server.tool(
   'search_trails',
   'Search the user\'s browsing "research trails" (reconciled clusters of the tabs they had open) by natural language. ' +
     'Returns matching trails with labels, category, size, and why each matched. ' +
-    'Leave the query empty to list all trails (optionally within one category). ' +
-    'Pass a category to restrict results, e.g. only "travel" trails.',
+    'Leave the query empty to list all trails, ranked by recency.',
   {
     query: z.string().default('').describe('what to look for, e.g. "GPU pricing research" or "that trip planning". Empty = list all trails.'),
-    category: z.string().optional().describe(`optional category filter, one of: ${CATEGORY_HELP}`),
   },
-  async ({ query, category }) => {
-    const cat = coerceToExisting(category) ?? undefined; // ignore an unrecognized category rather than erroring
-    const hits = await searchTrails(getUserId(), query, 8, { category: cat });
+  async ({ query }) => {
+    const hits = await searchTrails(getUserId(), query, 8);
     return text(
       hits.map((h) => ({
         id: h.trail.id,

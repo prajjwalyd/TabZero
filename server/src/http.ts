@@ -89,8 +89,7 @@ export function startHttp(): http.Server {
 
       if (req.method === 'POST' && path === '/search') {
         const body = await readBody(req);
-        const category = body?.category ? String(body.category) : undefined;
-        const hits = await searchTrails(getUserId(), String(body?.query || ''), Number(body?.limit) || 5, { category });
+        const hits = await searchTrails(getUserId(), String(body?.query || ''), Number(body?.limit) || 5);
         return send(res, 200, { hits });
       }
 

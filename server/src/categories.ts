@@ -140,34 +140,15 @@ function titleCase(s: string): string {
   return s.replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
-export function categoryKeys(): string[] {
-  ensure();
-  return [...keyCache!];
-}
-
 export function knownCategory(key: string | null | undefined): boolean {
   ensure();
   return !!key && keyCache!.has(key);
-}
-
-export function categoryLabel(key: string): string {
-  ensure();
-  return labelCache!.get(key) ?? titleCase(key.replace(/-/g, ' '));
 }
 
 /** The live vocabulary rendered for an LLM prompt: `dev (Code & Docs), learning (Learning & Research), …`. */
 export function categoryPromptList(): string {
   ensure();
   return [...labelCache!.entries()].map(([k, l]) => `${k} (${l})`).join(', ');
-}
-
-/** Validate free-form input against the *existing* vocabulary only (for the search filter). Never mints. */
-export function coerceToExisting(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  ensure();
-  const words = raw.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  for (const w of words) if (keyCache!.has(w)) return w;
-  return null;
 }
 
 const FILLER = new Set(['and', 'the', 'of', 'my', 'for', 'stuff', 'things', 'misc', 'other', 'various', 'random', 'general']);
