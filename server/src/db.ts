@@ -76,6 +76,15 @@ CREATE TABLE IF NOT EXISTS checkpoint_pages (
 CREATE INDEX IF NOT EXISTS idx_cp_pages_cp    ON checkpoint_pages(checkpoint_id);
 CREATE INDEX IF NOT EXISTS idx_cp_pages_trail ON checkpoint_pages(trail_id);
 
+-- Growable category vocabulary. Seeded (in categories.ts) from the fixed taxonomy with seed=1; the
+-- LLM mints new seed=0 keys only when a trail fits nothing existing. seed rows are never GC'd.
+CREATE TABLE IF NOT EXISTS categories (
+  key     TEXT PRIMARY KEY,
+  label   TEXT NOT NULL,
+  seed    INTEGER DEFAULT 0,
+  created INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS meta ( key TEXT PRIMARY KEY, value TEXT );
 `);
 

@@ -50,27 +50,30 @@ Create these two topics at [console.weaviate.cloud/engram](https://console.weavi
 
 ---
 
-## Install & run
+## Quick start (anyone)
+
+```bash
+npx tabzero
+```
+
+A guided setup stages the extension, optionally takes a [Weaviate Engram key](docs/engram.md), offers to register the MCP into your AI tools, and starts the daemon. Then, once:
+
+1. Open `chrome://extensions` (Chrome, Edge, Brave, Arc…) and enable **Developer mode**.
+2. **Load unpacked** → the folder the wizard printed (`~/.tabzero/extension`).
+3. Pin **Tab Zero** and click it. Browse a bit; trails appear automatically.
+
+No key needed to start — Tab Zero runs in **local mode** and you can add an Engram key anytime with `npx tabzero key`. Other commands: `npx tabzero start` · `npx tabzero mcp install` · `npx tabzero path`.
+
+## Run from source (dev)
 
 ```bash
 pnpm install
-
-# build the server (for the MCP entrypoint) and the extension
-pnpm build:server
-pnpm build:ext
-
-# start the backend daemon (keep this running)
-pnpm backend
+pnpm build:server   # compiles the MCP entrypoint
+pnpm build:ext      # bundles the extension -> extension/dist
+pnpm backend        # start the daemon (keep running)
 ```
 
-### Load the extension
-
-1. Open `chrome://extensions` (works in Chrome, Edge, Brave, Arc…).
-2. Enable **Developer mode**.
-3. **Load unpacked** → select `extension/dist`.
-4. Pin **Tab Zero** and click it. Browse a bit; trails appear automatically.
-
-Dev loop: `pnpm watch:ext` (rebuild on change) + `pnpm backend:dev` (restart on change).
+Load unpacked from `extension/dist`. Dev loop: `pnpm watch:ext` + `pnpm backend:dev`.
 
 ---
 
@@ -101,7 +104,7 @@ args = ["/ABSOLUTE/PATH/TO/TabZero/server/dist/mcp.js"]
 
 | Var | Default | Purpose |
 |---|---|---|
-| `ENGRAM_API_KEY` | — | Weaviate Engram key (reconciled memory) |
+| `ENGRAM_API_KEY` | — | Weaviate Engram key (reconciled memory) — [setup guide](docs/engram.md) |
 | `OPENROUTER_API_KEY` | — | Use OpenRouter for LLM instead of local `claude` |
 | `OPENROUTER_MODEL` | `deepseek/deepseek-v4-flash` | Chat model when using OpenRouter |
 | `TABZERO_CLAUDE_MODEL` | `haiku` | Model alias for the local `claude -p` path |

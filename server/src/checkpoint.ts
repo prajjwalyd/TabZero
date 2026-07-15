@@ -6,6 +6,7 @@
 import { db } from './db.js';
 import { canonicalize } from './canonical.js';
 import { getTrail, listTrails, labelTrail, summarizeTrail } from './trails.js';
+import { consolidateCategories } from './categories.js';
 import { flushEngram } from './sync.js';
 import * as cfg from './config.js';
 import type { TrailDTO } from './types.js';
@@ -17,6 +18,7 @@ export interface ZeroResult {
   trailCount: number;
   finalized: number;
   pushedToEngram: number;
+  categoriesMerged: number;
   trails: TrailDTO[];
 }
 
@@ -55,7 +57,10 @@ export async function zeroCheckpoint(openUrls: string[]): Promise<ZeroResult> {
     finalized++;
   }
 
-  // 3. Force-push everything stale to Engram right now (explicit intent bypasses the re-push guard).
+  // 3. Now that these trails are finalized (categories assigned), fold away any near-dead strays.
+  const categoriesMerged = consolidateCategories();
+
+  // 4. Force-push everything stale to Engram right now (explicit intent bypasses the re-push guard).
   const { pushed } = await flushEngram({ force: true, limit: 50 });
 
   const trailCount = (db.prepare('SELECT COUNT(*) c FROM trails WHERE page_count >= ?')
@@ -68,6 +73,7 @@ export async function zeroCheckpoint(openUrls: string[]): Promise<ZeroResult> {
     trailCount,
     finalized,
     pushedToEngram: pushed,
+    categoriesMerged,
     trails: listTrails({ limit: 8 }),
   };
 }

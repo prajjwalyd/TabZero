@@ -1,6 +1,11 @@
-// Offline trail categorization: score a trail's domains + lexical tokens against a small
-// taxonomy so the UI can group "train tickets" apart from "docs" apart from "social".
-// No LLM, no network — deterministic and instant.
+// Trail categorization. Two layers:
+//   1. categorize() — an offline heuristic (domains + tokens -> one of the SEED keys). Deterministic,
+//      instant, network-free. It's the cold-start and the fallback, and only ever emits seed keys.
+//   2. a *growable* vocabulary in the `categories` table, seeded from the fixed taxonomy below. The
+//      LLM (in labelTrail) reuses an existing key where it can and mints a new one only when a trail
+//      fits nothing — resolveCategory() enforces that reuse bias with a lexical novelty gate + ceiling.
+import { db } from './db.js';
+import * as cfg from './config.js';
 
 interface CategoryDef {
   key: string;
@@ -87,9 +92,9 @@ const CATS: CategoryDef[] = [
   },
 ];
 
-/** Display order + human labels. Any key not listed falls through to 'general'. */
-export const CATEGORY_ORDER = ['dev', 'learning', 'news', 'social', 'media', 'shopping', 'travel', 'finance', 'work', 'projects', 'general'];
-export const CATEGORY_LABEL: Record<string, string> = {
+/** The seed vocabulary the growable `categories` table is initialized from (seed=1, never GC'd). */
+const SEED_ORDER = ['dev', 'learning', 'news', 'social', 'media', 'shopping', 'travel', 'finance', 'work', 'projects', 'general'];
+const SEED_LABEL: Record<string, string> = {
   dev: 'Code & Docs',
   learning: 'Learning & Research',
   news: 'News & Reading',
@@ -103,17 +108,168 @@ export const CATEGORY_LABEL: Record<string, string> = {
   general: 'Other',
 };
 
-export const CATEGORY_KEYS = CATEGORY_ORDER;
+// ---------- growable, table-backed vocabulary ----------
 
-/** The taxonomy rendered for an LLM prompt: `dev (Code & Docs), learning (Learning & Research), …`. */
-export const CATEGORY_PROMPT_LIST = CATEGORY_ORDER.map((k) => `${k} (${CATEGORY_LABEL[k]})`).join(', ');
+// In-process cache of the vocabulary, lazily loaded and refreshed on mint/consolidate. The daemon
+// owns all writes; the MCP process only reads (filter help), so cross-process staleness of a
+// freshly-minted key is cosmetic (it just isn't offered as a filter until that process restarts).
+let keyCache: Set<string> | null = null;
+let labelCache: Map<string, string> | null = null;
 
-/** Coerce free-form LLM output to a valid category key, or null if it names none. */
-export function coerceCategory(raw: string | null | undefined): string | null {
+function seedIfEmpty(): void {
+  const n = (db.prepare('SELECT COUNT(*) c FROM categories').get() as { c: number }).c;
+  if (n > 0) return;
+  const ins = db.prepare('INSERT OR IGNORE INTO categories (key, label, seed, created) VALUES (?, ?, 1, ?)');
+  const now = Date.now();
+  for (const k of SEED_ORDER) ins.run(k, SEED_LABEL[k], now);
+}
+
+function refresh(): void {
+  const rows = db.prepare('SELECT key, label FROM categories').all() as { key: string; label: string }[];
+  keyCache = new Set(rows.map((r) => r.key));
+  labelCache = new Map(rows.map((r) => [r.key, r.label]));
+}
+
+function ensure(): void {
+  if (keyCache) return;
+  seedIfEmpty();
+  refresh();
+}
+
+function titleCase(s: string): string {
+  return s.replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+export function categoryKeys(): string[] {
+  ensure();
+  return [...keyCache!];
+}
+
+export function knownCategory(key: string | null | undefined): boolean {
+  ensure();
+  return !!key && keyCache!.has(key);
+}
+
+export function categoryLabel(key: string): string {
+  ensure();
+  return labelCache!.get(key) ?? titleCase(key.replace(/-/g, ' '));
+}
+
+/** The live vocabulary rendered for an LLM prompt: `dev (Code & Docs), learning (Learning & Research), …`. */
+export function categoryPromptList(): string {
+  ensure();
+  return [...labelCache!.entries()].map(([k, l]) => `${k} (${l})`).join(', ');
+}
+
+/** Validate free-form input against the *existing* vocabulary only (for the search filter). Never mints. */
+export function coerceToExisting(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  const words = raw.toLowerCase().split(/[^a-z]+/).filter(Boolean);
-  for (const w of words) if (CATEGORY_KEYS.includes(w)) return w;
+  ensure();
+  const words = raw.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  for (const w of words) if (keyCache!.has(w)) return w;
   return null;
+}
+
+const FILLER = new Set(['and', 'the', 'of', 'my', 'for', 'stuff', 'things', 'misc', 'other', 'various', 'random', 'general']);
+
+/** Normalize an LLM-proposed category into a canonical key: 1-2 significant tokens, lowercase, hyphenated. */
+function normalizeKey(raw: string): string {
+  const toks = raw.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 1 && !FILLER.has(t));
+  return toks.slice(0, 2).join('-');
+}
+
+/** Capped Levenshtein — returns 3 (our reject threshold) once the distance can't matter. */
+function editDistance(a: string, b: string): number {
+  if (Math.abs(a.length - b.length) > 2) return 3;
+  const dp = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = tmp;
+    }
+  }
+  return dp[b.length];
+}
+
+/**
+ * Nearest existing key that `key` should fold into (shared significant token, substring, or
+ * edit-distance <= 2), or null if genuinely distinct. This is the anti-fragmentation gate: it
+ * collapses morphological drift (code/coding, doc/docs, travel/traveling). Pure synonyms
+ * (trips vs travel) it can't catch — that's what the reuse-biased prompt is for.
+ */
+function nearestExisting(key: string, exclude: string | null = null): string | null {
+  ensure();
+  const kt = key.split('-').filter((t) => t.length >= 4);
+  let best: { k: string; d: number } | null = null;
+  for (const k of keyCache!) {
+    if (k === exclude) continue;
+    if (k === key) return k;
+    const okt = new Set(k.split('-'));
+    if (kt.some((t) => okt.has(t))) return k;
+    if (key.length >= 4 && k.includes(key)) return k;
+    if (k.length >= 4 && key.includes(k)) return k;
+    const d = editDistance(key, k);
+    if (d <= 2 && (!best || d < best.d)) best = { k, d };
+  }
+  return best?.k ?? null;
+}
+
+/**
+ * Resolve an LLM-proposed category to a stored key — reusing an existing one wherever possible and
+ * minting a new one only when the trail genuinely fits nothing (and we're under the ceiling).
+ * Returns null when it can't decide, so labelTrail keeps whatever the heuristic gave.
+ */
+export function resolveCategory(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  ensure();
+  // Fast path: the model named an existing key outright.
+  const direct = raw.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).find((w) => keyCache!.has(w));
+  if (direct) return direct;
+
+  const key = normalizeKey(raw);
+  if (!key) return null;
+  if (keyCache!.has(key)) return key;
+
+  const near = nearestExisting(key);
+  if (near) return near; // fold into the existing category
+
+  // Genuinely novel. Mint it — unless we've saturated, in which case fall back to the heuristic.
+  if (keyCache!.size >= cfg.MAX_CATEGORIES) return null;
+  db.prepare('INSERT OR IGNORE INTO categories (key, label, seed, created) VALUES (?, ?, 0, ?)')
+    .run(key, titleCase(key.replace(/-/g, ' ')), Date.now());
+  refresh();
+  return key;
+}
+
+/**
+ * Fold away near-dead minted categories: any non-seed key used by <=1 trail that has a lexically
+ * near neighbour gets its trails reassigned and the key deleted. Cheap self-healing for strays that
+ * slipped past the mint-time gate. Seed keys are never removed. Returns the number merged.
+ */
+export function consolidateCategories(): number {
+  ensure();
+  const usage = new Map<string, number>();
+  for (const r of db.prepare(
+    'SELECT category, COUNT(*) c FROM trails WHERE category IS NOT NULL GROUP BY category',
+  ).all() as { category: string; c: number }[]) {
+    usage.set(r.category, r.c);
+  }
+  const cats = db.prepare('SELECT key, seed FROM categories').all() as { key: string; seed: number }[];
+  let merged = 0;
+  for (const c of cats) {
+    if (c.seed) continue;
+    if ((usage.get(c.key) ?? 0) > 1) continue;
+    const target = nearestExisting(c.key, c.key);
+    if (!target) continue;
+    db.prepare('UPDATE trails SET category = ? WHERE category = ?').run(target, c.key);
+    db.prepare('DELETE FROM categories WHERE key = ?').run(c.key);
+    merged++;
+  }
+  if (merged) refresh();
+  return merged;
 }
 
 /** Best-matching category key for a trail; 'general' when nothing scores. */

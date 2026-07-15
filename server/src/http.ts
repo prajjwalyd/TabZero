@@ -112,6 +112,14 @@ export function startHttp(): http.Server {
       return send(res, 500, { error: 'internal' });
     }
   });
+  server.on('error', (e: NodeJS.ErrnoException) => {
+    if (e.code === 'EADDRINUSE') {
+      console.error(`\n  Port ${PORT} is already in use — Tab Zero is probably already running.\n  (Change it with TABZERO_PORT, or stop the other instance.)\n`);
+    } else {
+      console.error('[http]', e.message);
+    }
+    process.exit(1);
+  });
   server.listen(PORT, HOST);
   return server;
 }

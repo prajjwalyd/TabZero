@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Close every tab guilt-free. Your browser remembers why and any agent can resurrect it. Built on Weaviate Engram.",
   "packageManager": "pnpm@10.34.1",
+  "bin": { "tabzero": "bin/tabzero.js" },
+  "files": ["bin", "server/dist", "extension/dist", "README.md"],
+  "engines": { "node": ">=22.5" },
   "scripts": {
     "backend": "NODE_NO_WARNINGS=1 tsx server/src/index.ts",
     "backend:dev": "NODE_NO_WARNINGS=1 tsx watch server/src/index.ts",
@@ -14,9 +17,11 @@
     "build:ext": "cd extension && node build.mjs",
     "watch:ext": "cd extension && node build.mjs --watch",
     "build": "pnpm run build:server && pnpm run build:ext",
-    "typecheck": "tsc -p server/tsconfig.json --noEmit && tsc -p extension/tsconfig.json --noEmit"
+    "typecheck": "tsc -p server/tsconfig.json --noEmit && tsc -p extension/tsconfig.json --noEmit",
+    "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
+    "@clack/prompts": "^1.7.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "zod": "^3.23.8"
   },

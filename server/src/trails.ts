@@ -2,7 +2,7 @@ import { db } from './db.js';
 import { topTokens, provisionalLabel, type Vec } from './canonical.js';
 import { llmText } from './llm.js';
 import { engramSearch } from './engram.js';
-import { categorize, coerceCategory, CATEGORY_KEYS, CATEGORY_PROMPT_LIST } from './categories.js';
+import { categorize, resolveCategory, knownCategory, categoryPromptList } from './categories.js';
 import * as cfg from './config.js';
 import type { TrailRow, PageRow, TrailDTO, PageDTO, TrailDetail, TrailStatus } from './types.js';
 
@@ -45,7 +45,7 @@ export function toDTO(t: TrailRow, now: number): TrailDTO {
   let tokens: string[] = [];
   try { tokens = Object.keys(JSON.parse(t.centroid || '{}')); } catch { /* ignore */ }
   // Prefer the LLM-assigned category; fall back to the instant heuristic until it lands.
-  const category = (t.category && CATEGORY_KEYS.includes(t.category)) ? t.category : categorize(domains, tokens);
+  const category = knownCategory(t.category) ? t.category! : categorize(domains, tokens);
   return {
     id: t.id,
     label: t.label || provisionalLabel([], domains[0] ?? null),
@@ -134,7 +134,8 @@ export async function labelTrail(id: string): Promise<void> {
     `These web pages form one research trail:\n${titles}\n\n` +
       `Line 1: a short specific name for this trail, 2-6 words, no quotes, no trailing punctuation.\n` +
       `Line 2: a 6-10 word description starting with a verb.\n` +
-      `Line 3: the single best-fitting category, using exactly one key from this list: ${CATEGORY_PROMPT_LIST}. Output only the key.`,
+      `Line 3: the category. STRONGLY prefer reusing exactly one key from this list: ${categoryPromptList()}. ` +
+      `Only if the trail genuinely fits none of them, output a short new lowercase key (1-2 words, hyphenated). Output only the key.`,
     { system: 'You label a person\'s browsing research trails. Output exactly three lines: name, description, category key.', maxTokens: 80, timeoutMs: 40000 },
   );
 
@@ -145,7 +146,7 @@ export async function labelTrail(id: string): Promise<void> {
     const lines = out.split('\n').map((s) => s.replace(/^["'\-\s]+|["'\s]+$/g, '').trim()).filter(Boolean);
     if (lines[0]) label = lines[0].slice(0, 60);
     if (lines[1]) oneLiner = lines[1].slice(0, 120);
-    if (lines[2]) category = coerceCategory(lines[2]); // null if it named no valid key -> heuristic stays
+    if (lines[2]) category = resolveCategory(lines[2]); // reuse existing, mint if novel, or null -> heuristic stays
   }
   // Only overwrite a stored category when the LLM gave a valid one; otherwise keep what's there.
   if (category) {

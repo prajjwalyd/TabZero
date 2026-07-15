@@ -1,0 +1,318 @@
+// `tabzero` CLI — the one-command setup + run experience.
+// IMPORTANT: this file must not import anything that pulls in `node:sqlite` (db/index/mcp),
+// because it may run on a Node that needs --experimental-sqlite. The daemon and MCP server are
+// launched as child processes with that flag added when the Node version requires it.
+import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { homedir, platform } from 'node:os';
+import { spawn, spawnSync } from 'node:child_process';
+import {
+  intro, outro, password, confirm, multiselect, spinner, note, log, isCancel, cancel,
+} from '@clack/prompts';
+import { ENV_PATH, DATA_DIR, PORT } from './config.js';
+import { allTargets, type McpCommand } from './mcp-install.js';
+
+const REPO = 'https://github.com/prajjwalyd/TabZero';
+const DOCS_ENGRAM = `${REPO}/blob/main/docs/engram.md`;
+
+// --- environment / paths ---
+const here = dirname(fileURLToPath(import.meta.url)); // <pkg>/server/dist
+const PKG_ROOT = join(here, '..', '..'); // <pkg>
+const IS_REPO = existsSync(join(PKG_ROOT, 'tsconfig.base.json'));
+const EXT_SRC = join(PKG_ROOT, 'extension', 'dist');
+const EXT_DEST = join(homedir(), '.tabzero', 'extension');
+const INDEX_JS = join(PKG_ROOT, 'server', 'dist', 'index.js');
+const MCP_JS = join(PKG_ROOT, 'server', 'dist', 'mcp.js');
+
+const [NODE_MAJOR, NODE_MINOR] = process.versions.node.split('.').map(Number);
+const NODE_OK = NODE_MAJOR > 22 || (NODE_MAJOR === 22 && NODE_MINOR >= 5); // node:sqlite lands in 22.5
+const SQLITE_FLAG = NODE_MAJOR === 22 || NODE_MAJOR === 23 ? ['--experimental-sqlite'] : []; // flagless from Node 24
+
+/** Command a harness will spawn to talk to our MCP server. */
+const MCP_COMMAND: McpCommand = IS_REPO
+  ? { command: process.execPath, args: [...SQLITE_FLAG, MCP_JS] }
+  : { command: 'npx', args: ['-y', 'tabzero', 'mcp'] };
+
+/** OSC 8 terminal hyperlink — cmd/ctrl-click to open. Renders as the plain label where unsupported. */
+function link(label: string, url: string): string {
+  const OSC = '\x1b]8;;';
+  const ST = '\x1b\\';
+  return `${OSC}${url}${ST}${label}${OSC}${ST}`;
+}
+
+/** Bold text (headings). */
+const bold = (s: string): string => `\x1b[1m${s}\x1b[0m`;
+
+/** Open a URL / reveal a folder with the OS default handler (best-effort, never throws). */
+function openExternal(target: string): void {
+  const cmd = platform() === 'darwin' ? 'open' : platform() === 'win32' ? 'explorer' : 'xdg-open';
+  try { spawn(cmd, [target], { stdio: 'ignore', detached: true }).unref(); } catch { /* ignore */ }
+}
+
+/** True if a Tab Zero daemon is already answering on the configured port. */
+async function isDaemonUp(): Promise<boolean> {
+  try {
+    const r = await fetch(`http://127.0.0.1:${PORT}/health`, { signal: AbortSignal.timeout(800) });
+    return r.ok;
+  } catch { return false; }
+}
+
+/** Retro block banner in Tab Zero green. */
+function banner(): void {
+  const g = '\x1b[38;2;93;138;95m';
+  const rst = '\x1b[0m';
+  const art = [
+    '████████╗ █████╗ ██████╗   ███████╗███████╗██████╗  ██████╗',
+    '╚══██╔══╝██╔══██╗██╔══██╗  ╚══███╔╝██╔════╝██╔══██╗██╔═══██╗',
+    '   ██║   ███████║██████╔╝    ███╔╝ █████╗  ██████╔╝██║   ██║',
+    '   ██║   ██╔══██║██╔══██╗   ███╔╝  ██╔══╝  ██╔══██╗██║   ██║',
+    '   ██║   ██║  ██║██████╔╝  ███████╗███████╗██║  ██║╚██████╔╝',
+    '   ╚═╝   ╚═╝  ╚═╝╚═════╝   ╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝',
+  ].map((l) => '  ' + l).join('\n');
+  process.stdout.write(`\n${g}${art}${rst}\n\n`);
+}
+
+function bail<T>(v: T | symbol): T {
+  if (isCancel(v)) { cancel('Setup cancelled.'); process.exit(0); }
+  return v as T;
+}
+
+function requireNode(): void {
+  if (NODE_OK) return;
+  cancel(`Tab Zero needs Node 22.5+ (24 recommended). You're on ${process.versions.node}. Try: nvm install 24`);
+  process.exit(1);
+}
+
+// --- .env upsert (for the Engram key) ---
+function saveEnv(key: string, val: string): void {
+  mkdirSync(dirname(ENV_PATH), { recursive: true });
+  const line = `${key}=${val}`;
+  let body = existsSync(ENV_PATH) ? readFileSync(ENV_PATH, 'utf8') : '';
+  const re = new RegExp(`^${key}=.*$`, 'm');
+  body = re.test(body) ? body.replace(re, line) : (body && !body.endsWith('\n') ? body + '\n' : body) + line + '\n';
+  writeFileSync(ENV_PATH, body);
+}
+
+// --- steps ---
+function stageExtension(): string | null {
+  if (!existsSync(EXT_SRC)) return null;
+  mkdirSync(dirname(EXT_DEST), { recursive: true });
+  cpSync(EXT_SRC, EXT_DEST, { recursive: true });
+  return EXT_DEST;
+}
+
+async function askEngramKey(): Promise<void> {
+  log.info(`${bold('Weaviate Engram key')} adds semantic search + agent memory (optional).\nSetup guide -> ${link(DOCS_ENGRAM, DOCS_ENGRAM)}`);
+  const key = bail(await password({
+    message: 'Paste your Engram API key, or press Enter to skip (local mode)',
+    mask: '•',
+  }));
+  const trimmed = (key || '').trim();
+  if (!trimmed) { log.info('Skipped — local mode (semantic search + agent memory stay off until you add a key).'); return; }
+  saveEnv('ENGRAM_API_KEY', trimmed);
+  log.success('Engram key saved.');
+}
+
+async function runMcpInstall(): Promise<void> {
+  const targets = allTargets();
+  const detected = targets.filter((t) => t.detected());
+  const selected = bail(await multiselect({
+    message: 'Install the Tab Zero MCP into which tools?',
+    options: targets.map((t) => ({ value: t.id, label: t.name, hint: t.detected() ? 'detected' : t.hint })),
+    initialValues: detected.map((t) => t.id),
+    required: false,
+  })) as string[];
+
+  if (!selected.length) { log.info('No MCP targets selected.'); return; }
+  const s = spinner();
+  s.start('Writing MCP config…');
+  const lines: string[] = [];
+  for (const t of targets.filter((x) => selected.includes(x.id))) {
+    const r = t.install(MCP_COMMAND);
+    lines.push(`${r.ok ? '✓' : '✗'} ${t.name} — ${r.detail}`);
+  }
+  s.stop('MCP install complete.');
+  note(lines.join('\n'), 'Results');
+  log.info('Restart / reconnect each tool so it picks up the new server.');
+}
+
+function startDaemon(): void {
+  const child = spawn(process.execPath, [...SQLITE_FLAG, INDEX_JS], { stdio: 'inherit', env: process.env });
+  child.on('exit', (code) => process.exit(code ?? 0));
+}
+
+/** Make `tabzero` a bare command: `npm link` from the repo (dev), `npm i -g` once published. */
+function installGlobal(): { ok: boolean; detail: string } {
+  const args = IS_REPO ? ['link'] : ['i', '-g', 'tabzero'];
+  const r = spawnSync('npm', args, { stdio: 'ignore', cwd: IS_REPO ? PKG_ROOT : undefined });
+  if (r.status === 0) return { ok: true, detail: IS_REPO ? 'npm link' : 'npm i -g tabzero' };
+  return { ok: false, detail: 'needs different permissions, or the package isn’t published yet' };
+}
+
+// --- commands ---
+async function cmdSetup(): Promise<void> {
+  requireNode();
+  banner();
+  const s = spinner();
+  s.start('Preparing the extension…');
+  const dest = stageExtension();
+  s.stop(dest ? 'Extension ready.' : 'Extension build not found.');
+  if (!dest) {
+    log.error(IS_REPO ? 'Run `pnpm build:ext` first.' : 'This install is missing extension/dist — please reinstall.');
+    process.exit(1);
+  }
+  // A log block (not a note box) so the links can be real OSC 8 hyperlinks — clickable and copyable —
+  // without breaking a box border. Both are also plain URLs, so they select cleanly.
+  log.step(
+    `${bold('One-time browser setup')}\n` +
+    `1. Open -> ${link('chrome://extensions', 'chrome://extensions')}\n` +
+    `2. Enable Developer mode\n` +
+    `3. Load unpacked from this folder ->` +
+    ` ${link(dest, 'file://' + dest)}`,
+  );
+  const reveal = bail(await confirm({ message: 'Open the extension folder now (to drag into Load unpacked)?', initialValue: true }));
+  if (reveal) openExternal(dest);
+
+  await askEngramKey();
+
+  const wantMcp = bail(await confirm({ message: 'Connect Tab Zero to your AI tools (MCP)?', initialValue: true }));
+  if (wantMcp) await runMcpInstall();
+
+  const wantGlobal = bail(await confirm({
+    message: 'Install `tabzero` as a global command, so you can skip `npx` next time?',
+    initialValue: true,
+  }));
+  if (wantGlobal) {
+    const gs = spinner();
+    gs.start('Installing globally…');
+    const r = installGlobal();
+    gs.stop(r.ok ? 'Installed — run `tabzero` directly from now on.' : 'Skipped the global install.');
+    if (!r.ok) log.warn(`Couldn't install globally (${r.detail}). Keep using \`npx tabzero\`.`);
+  }
+
+  if (await isDaemonUp()) {
+    outro(`Tab Zero is already running on http://127.0.0.1:${PORT} — you're all set.`);
+    return;
+  }
+  const start = bail(await confirm({ message: 'Start the Tab Zero daemon now?', initialValue: true }));
+  if (start) {
+    outro(`Data lives in ${DATA_DIR}. Starting the daemon — leave this running while you browse.`);
+    startDaemon();
+  } else {
+    outro('All set. Run `npx tabzero start` whenever you want the daemon running.');
+  }
+}
+
+async function cmdMcp(): Promise<void> {
+  // Runs the stdio MCP server. No stdout except protocol frames.
+  if (SQLITE_FLAG.length) {
+    const child = spawn(process.execPath, [...SQLITE_FLAG, MCP_JS], { stdio: 'inherit', env: process.env });
+    child.on('exit', (code) => process.exit(code ?? 0));
+  } else {
+    await import(pathToFileURL(MCP_JS).href);
+  }
+}
+
+async function cmdMcpInstall(): Promise<void> {
+  requireNode();
+  intro('  Tab Zero · MCP  ');
+  await runMcpInstall();
+  outro('Done.');
+}
+
+async function cmdKey(value?: string): Promise<void> {
+  intro('Engram key');
+  let key = value;
+  if (!key) {
+    log.info(`Setup guide: ${link(DOCS_ENGRAM, DOCS_ENGRAM)}`);
+    key = bail(await password({ message: 'Paste your Weaviate Engram API key', mask: '•' })) as string;
+  }
+  const trimmed = (key || '').trim();
+  if (!trimmed) { cancel('No key entered.'); process.exit(0); }
+  saveEnv('ENGRAM_API_KEY', trimmed);
+  outro(`Saved to ${ENV_PATH}. Restart the daemon to pick it up.`);
+}
+
+async function cmdStart(): Promise<void> {
+  requireNode();
+  if (await isDaemonUp()) {
+    process.stdout.write(`Tab Zero is already running on http://127.0.0.1:${PORT}\n`);
+    return;
+  }
+  stageExtension();
+  startDaemon();
+}
+
+function cmdPath(): void {
+  const dest = stageExtension() || EXT_SRC;
+  process.stdout.write(dest + '\n');
+}
+
+async function cmdUninstall(): Promise<void> {
+  banner();
+  intro('Uninstall');
+
+  // 1. MCP registrations across every harness.
+  const removeMcp = bail(await confirm({ message: 'Remove the Tab Zero MCP from your AI tools?', initialValue: true }));
+  if (removeMcp) {
+    const s = spinner();
+    s.start('Cleaning MCP config…');
+    const lines: string[] = [];
+    for (const t of allTargets()) {
+      const r = t.uninstall();
+      if (r.detail !== 'not present') lines.push(`${r.ok ? '✓' : '✗'} ${t.name} — ${r.detail}`);
+    }
+    s.stop('MCP config cleaned.');
+    note(lines.length ? lines.join('\n') : 'Nothing was registered.', 'Removed');
+  }
+
+  // 2. The staged extension copy (always under ~/.tabzero).
+  if (existsSync(EXT_DEST)) { rmSync(EXT_DEST, { recursive: true, force: true }); log.info('Removed the staged extension folder.'); }
+
+  // 3. All data — destructive, opt-in.
+  const wipe = bail(await confirm({
+    message: `Delete ALL Tab Zero data (${DATA_DIR}) — trails, memory, and your saved Engram key? This cannot be undone.`,
+    initialValue: false,
+  }));
+  if (wipe) { rmSync(DATA_DIR, { recursive: true, force: true }); log.success('All data deleted — clean state.'); }
+  else log.info(`Kept your data in ${DATA_DIR}.`);
+
+  // Best-effort: drop the global `tabzero` command if one was installed.
+  const g = IS_REPO ? spawnSync('npm', ['unlink'], { stdio: 'ignore', cwd: PKG_ROOT }) : spawnSync('npm', ['rm', '-g', 'tabzero'], { stdio: 'ignore' });
+  if (g.status === 0) log.info('Removed the global `tabzero` command.');
+
+  outro('Done. Remove the browser extension at chrome://extensions, and stop any running daemon with Ctrl-C.');
+}
+
+function usage(): void {
+  process.stdout.write(
+    'tabzero — close every tab guilt-free\n\n' +
+    'Usage:\n' +
+    '  tabzero                 Interactive setup (extension + optional key + MCP), then start\n' +
+    '  tabzero start           Start the local daemon\n' +
+    '  tabzero mcp             Run the MCP server over stdio (used by agent configs)\n' +
+    '  tabzero mcp install     Register the MCP into your AI tools\n' +
+    '  tabzero key [value]     Save your Weaviate Engram API key\n' +
+    '  tabzero path            Print the extension folder to load unpacked\n' +
+    '  tabzero uninstall       Remove MCP configs + (optionally) all data — clean state\n',
+  );
+}
+
+// --- dispatch ---
+const [cmd, sub] = process.argv.slice(2);
+switch (cmd) {
+  case undefined:
+  case 'setup': await cmdSetup(); break;
+  case 'start': await cmdStart(); break;
+  case 'mcp':
+    if (sub === 'install') await cmdMcpInstall();
+    else await cmdMcp();
+    break;
+  case 'mcp-install': await cmdMcpInstall(); break;
+  case 'key': await cmdKey(sub); break;
+  case 'path': cmdPath(); break;
+  case 'uninstall': await cmdUninstall(); break;
+  case 'help': case '--help': case '-h': usage(); break;
+  default: usage(); process.exit(1);
+}

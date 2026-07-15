@@ -1,9 +1,10 @@
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
 
-/** Walk up from a starting dir to find the repo root (marked by tsconfig.base.json, committed & root-only). */
-function findRoot(start: string): string {
+/** Walk up from a starting dir to find the repo root (marked by tsconfig.base.json, committed & root-only). Null if not in a repo. */
+function findRepoRoot(start: string): string | null {
   let dir = start;
   for (let i = 0; i < 12; i++) {
     if (existsSync(join(dir, 'tsconfig.base.json'))) return dir;
@@ -11,17 +12,20 @@ function findRoot(start: string): string {
     if (parent === dir) break;
     dir = parent;
   }
-  return start;
+  return null;
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
-export const ROOT =
+// In the repo (dev): root is the repo, data sits in <repo>/.tabzero.
+// Installed/packaged (npx, global): no repo marker exists, so data lives in ~/.tabzero and persists
+// across npm-cache eviction.
+const repoRoot =
   process.env.TABZERO_ROOT ||
-  (existsSync(join(process.cwd(), 'tsconfig.base.json')) ? process.cwd() : findRoot(here));
+  (existsSync(join(process.cwd(), 'tsconfig.base.json')) ? process.cwd() : findRepoRoot(here));
+export const ROOT = repoRoot || homedir();
 
 /** Minimal .env loader — does not override values already in the environment. */
-function loadEnv(root: string): void {
-  const p = join(root, '.env');
+function loadEnv(p: string): void {
   if (!existsSync(p)) return;
   for (const line of readFileSync(p, 'utf8').split('\n')) {
     const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);
@@ -34,10 +38,15 @@ function loadEnv(root: string): void {
     if (process.env[key] === undefined) process.env[key] = val;
   }
 }
-loadEnv(ROOT);
-
-export const DATA_DIR = process.env.TABZERO_DATA || join(ROOT, '.tabzero');
+export const DATA_DIR =
+  process.env.TABZERO_DATA || (repoRoot ? join(repoRoot, '.tabzero') : join(homedir(), '.tabzero'));
 mkdirSync(DATA_DIR, { recursive: true });
+
+// Where the .env lives: dev reads <repo>/.env (git-ignored, convenient); an installed copy reads
+// <DATA_DIR>/.env so `tabzero key` has a stable home for it. Loaded before any env-derived config below.
+export const ENV_PATH = repoRoot ? join(repoRoot, '.env') : join(DATA_DIR, '.env');
+loadEnv(ENV_PATH);
+
 export const DB_PATH = process.env.TABZERO_DB || join(DATA_DIR, 'tabzero.db');
 
 export const HOST = '127.0.0.1';
@@ -67,6 +76,12 @@ export const MIN_TRAIL_PAGES = 2; // pages needed to graduate forming -> live
 export const DECAY_HALFLIFE_DAYS = 7;
 export const DORMANT_AFTER_DAYS = 3;
 export const ARCHIVE_AFTER_DAYS = 30;
+
+// Categories are a *growable* vocabulary: seeded from the fixed taxonomy, the LLM reuses an existing
+// one where it can and mints a new key only when nothing fits. This is the saturation backstop — a
+// high ceiling so genuinely-new life-areas can still appear early, while the reuse bias + lexical
+// novelty gate keep the effective set small. Once here, new-category creation is effectively frozen.
+export const MAX_CATEGORIES = 20;
 
 // Enrichment scheduling — decouple *when a trail is eligible* from *how often loops wake*.
 // The settle gate is the keystone: an actively-growing trail is re-dirtied on every navigation,

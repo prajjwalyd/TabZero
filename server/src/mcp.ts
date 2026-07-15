@@ -6,7 +6,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { getUserId } from './db.js';
 import { searchTrails, getTrailDetail, getTrail, resurrectUrls, summarizeTrail, weekInTabs } from './trails.js';
-import { CATEGORY_KEYS, CATEGORY_LABEL, coerceCategory } from './categories.js';
+import { categoryPromptList, coerceToExisting } from './categories.js';
 
 function text(obj: unknown) {
   return { content: [{ type: 'text' as const, text: typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2) }] };
@@ -14,7 +14,7 @@ function text(obj: unknown) {
 
 const server = new McpServer({ name: 'tabzero', version: '0.1.0' });
 
-const CATEGORY_HELP = CATEGORY_KEYS.map((k) => `${k} (${CATEGORY_LABEL[k]})`).join(', ');
+const CATEGORY_HELP = categoryPromptList();
 
 server.tool(
   'search_trails',
@@ -27,7 +27,7 @@ server.tool(
     category: z.string().optional().describe(`optional category filter, one of: ${CATEGORY_HELP}`),
   },
   async ({ query, category }) => {
-    const cat = coerceCategory(category) ?? undefined; // ignore an unrecognized category rather than erroring
+    const cat = coerceToExisting(category) ?? undefined; // ignore an unrecognized category rather than erroring
     const hits = await searchTrails(getUserId(), query, 8, { category: cat });
     return text(
       hits.map((h) => ({
