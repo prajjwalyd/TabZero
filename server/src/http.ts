@@ -3,7 +3,7 @@ import { HOST, PORT, TOKEN, ENGRAM_ENABLED } from './config.js';
 import { db, getUserId } from './db.js';
 import { ingestEvent } from './pipeline.js';
 import {
-  listTrails, getTrailDetail, getTrail, resurrectUrls, searchTrails, weekInTabs, summarizeTrail,
+  listTrails, getTrailDetail, getTrail, resurrectUrls, searchTrails, weekInTabs, summarizeTrail, getInterests,
 } from './trails.js';
 import { LLM_BACKEND } from './llm.js';
 import { zeroCheckpoint } from './checkpoint.js';
@@ -96,6 +96,10 @@ export function startHttp(): http.Server {
 
       if (req.method === 'GET' && path === '/week') {
         return send(res, 200, weekInTabs());
+      }
+
+      if (req.method === 'GET' && path === '/interests') {
+        return send(res, 200, await getInterests(getUserId()));
       }
 
       if (req.method === 'POST' && path === '/zero') {

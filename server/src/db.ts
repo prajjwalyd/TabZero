@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import { DB_PATH } from './config.js';
+import { DB_PATH, USER_ID } from './config.js';
 
 export const db = new DatabaseSync(DB_PATH);
 
@@ -106,6 +106,12 @@ if (!trailCols.some((c) => c.name === 'last_engram_push')) {
   db.exec('ALTER TABLE trails ADD COLUMN last_engram_push INTEGER');
 }
 
+// Migration: record who authored the cached summary ('engram' | 'local' | 'heuristic'). A local
+// summary is a placeholder that gets upgraded to Engram's reconciled memory once extraction lands.
+if (!trailCols.some((c) => c.name === 'summary_source')) {
+  db.exec('ALTER TABLE trails ADD COLUMN summary_source TEXT');
+}
+
 export function getMeta(key: string): string | null {
   const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | undefined;
   return row?.value ?? null;
@@ -115,8 +121,14 @@ export function setMeta(key: string, value: string): void {
   db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, value);
 }
 
-/** Stable per-install user id (generated once, reused forever — never a device fingerprint). */
+/**
+ * The user/Engram scope. An explicit `TABZERO_USER_ID` always wins (pin an identity, or switch to a
+ * clean slate); otherwise a stable random id is generated once and reused forever. Never a device
+ * fingerprint. The env override is runtime-only — it is NOT persisted, so removing it reverts to the
+ * stored id.
+ */
 export function getUserId(): string {
+  if (USER_ID) return USER_ID;
   const existing = getMeta('user_id');
   if (existing) return existing;
   const id = 'u_' + randomUUID();

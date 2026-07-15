@@ -4,12 +4,14 @@ import { engramUpsertTrail } from './engram.js';
 import * as cfg from './config.js';
 import type { PageDTO } from './types.js';
 
-function buildContent(label: string, summary: string | null, pages: PageDTO[]): string {
-  const lines = pages
+// The RAW signal we hand Engram: the label plus one atomic fact per page. NOT a finished summary —
+// Engram's own pipeline extracts and reconciles the memory from these, so it evolves as the trail
+// grows rather than us overwriting a pre-baked blob.
+function buildSignal(label: string, pages: PageDTO[]): string[] {
+  const facts = pages
     .slice(-25)
-    .map((p) => `- ${p.title}${p.description ? ' — ' + p.description.slice(0, 160) : ''} (${p.domain})`)
-    .join('\n');
-  return `Research trail: ${label}\n${summary ? summary + '\n' : ''}Pages:\n${lines}`;
+    .map((p) => `${p.title}${p.description ? ' — ' + p.description.slice(0, 200) : ''} (${p.domain})`);
+  return [`Research trail: ${label}`, ...facts];
 }
 
 /** Count of trails with pending enrichment work, ignoring the settle gate (used to drive idle backoff). */
@@ -88,8 +90,8 @@ export async function flushEngram(
   for (const { id } of dirty) {
     const t = getTrail(id);
     if (!t) continue;
-    const content = buildContent(t.label || id, t.summary, trailPages(id));
-    const ref = await engramUpsertTrail(userId, id, content);
+    const signal = buildSignal(t.label || id, trailPages(id));
+    const ref = await engramUpsertTrail(userId, id, signal);
     if (ref) {
       // only clear the dirty flag on success, so failed pushes retry next pass
       db.prepare('UPDATE trails SET engram_dirty = 0, engram_ref = ?, last_engram_push = ? WHERE id = ?')

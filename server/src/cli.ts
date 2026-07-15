@@ -154,6 +154,7 @@ function installGlobal(): { ok: boolean; detail: string } {
 async function cmdSetup(): Promise<void> {
   requireNode();
   banner();
+  intro('Install');
   const s = spinner();
   s.start('Preparing the extension…');
   const dest = stageExtension();

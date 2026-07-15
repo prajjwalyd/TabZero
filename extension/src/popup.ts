@@ -231,14 +231,20 @@ function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLE
       });
       detail.appendChild(reopen);
 
-      // If a recap is already cached, show it now; otherwise generate it (may take a few seconds).
+      // Show any cached recap instantly as a placeholder, then always resurrect: that path prefers
+      // Engram's authored memory and upgrades a stale local placeholder (and caches the result).
       if (d?.summary) {
         summaryEl.textContent = d.summary;
         summaryEl.classList.remove('loading');
       } else {
         summaryEl.textContent = 'Writing recap…';
-        const r = await api.post(`/trails/${t.id}/resurrect`);
-        summaryEl.textContent = r?.summary || 'No recap available.';
+      }
+      const r = await api.post(`/trails/${t.id}/resurrect`);
+      if (r?.summary) {
+        summaryEl.textContent = r.summary;
+        summaryEl.classList.remove('loading');
+      } else if (!d?.summary) {
+        summaryEl.textContent = 'No recap available.';
         summaryEl.classList.remove('loading');
       }
       loaded = true;

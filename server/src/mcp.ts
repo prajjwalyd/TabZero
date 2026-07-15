@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { getUserId } from './db.js';
-import { searchTrails, getTrailDetail, getTrail, resurrectUrls, summarizeTrail, weekInTabs } from './trails.js';
+import { searchTrails, getTrailDetail, getTrail, resurrectUrls, summarizeTrail, weekInTabs, getInterests } from './trails.js';
 import { categoryPromptList, coerceToExisting } from './categories.js';
 
 function text(obj: unknown) {
@@ -74,6 +74,12 @@ server.tool(
   'week_in_tabs',
   'Get fun stats about the user\'s recent browsing: deepest rabbit hole, most-abandoned trail, late-night incidents, biggest time sink, etc.',
   async () => text(weekInTabs()),
+);
+
+server.tool(
+  'research_interests',
+  'The user\'s durable, cross-trail interests and ongoing projects — the themes they keep returning to across many separate trails, as derived by Engram from their browsing memory. Use this to personalize, to recall long-running threads, or to answer "what have I been into lately?".',
+  async () => text(await getInterests(getUserId())),
 );
 
 await server.connect(new StdioServerTransport());

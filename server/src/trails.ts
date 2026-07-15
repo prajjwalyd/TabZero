@@ -1,7 +1,7 @@
-import { db } from './db.js';
-import { topTokens, provisionalLabel, type Vec } from './canonical.js';
+import { db, getUserId } from './db.js';
+import { topTokens, provisionalLabel, cosine, type Vec } from './canonical.js';
 import { llmText } from './llm.js';
-import { engramSearch } from './engram.js';
+import { engramSearch, engramTrailMemory, engramInterests, engramAssertInterest } from './engram.js';
 import { categorize, resolveCategory, knownCategory, categoryPromptList } from './categories.js';
 import * as cfg from './config.js';
 import type { TrailRow, PageRow, TrailDTO, PageDTO, TrailDetail, TrailStatus } from './types.js';
@@ -159,8 +159,23 @@ export async function labelTrail(id: string): Promise<void> {
 export async function summarizeTrail(id: string, opts: { force?: boolean } = {}): Promise<string> {
   const t = getTrail(id);
   if (!t) return '';
-  // Cache hit: a fresh (non-dirty) summary already exists — skip the multi-second LLM call.
-  if (!opts.force && t.summary && !t.summary_dirty) return t.summary;
+  const store = (summary: string, source: 'engram' | 'local' | 'heuristic') =>
+    db.prepare('UPDATE trails SET summary = ?, summary_source = ?, summary_dirty = 0 WHERE id = ?').run(summary, source, id);
+
+  const fresh = !!t.summary && !t.summary_dirty;
+  // Fast path: a fresh, Engram-authored summary is the canonical recap — return it instantly.
+  if (!opts.force && fresh && t.summary_source === 'engram') return t.summary!;
+
+  // Prefer Engram's reconciled memory. When only a LOCAL placeholder is cached, this is the upgrade
+  // path: each read retries Engram until its (async) extraction lands, then Engram's version sticks.
+  if (cfg.ENGRAM_ENABLED) {
+    const mem = await engramTrailMemory(getUserId(), id, t.label || '');
+    if (mem) { store(mem, 'engram'); return mem; }
+  }
+
+  // Engram not ready yet. Keep a fresh local placeholder rather than burning an LLM call every read.
+  if (!opts.force && fresh) return t.summary!;
+
   const pages = trailPages(id);
   const now = Date.now();
   const lines = pages
@@ -179,8 +194,9 @@ export async function summarizeTrail(id: string, opts: { force?: boolean } = {})
       `(3) where they left off / what's unfinished. Be concrete about the actual topic. No preamble.`,
     { system: 'You recap a person\'s browsing research trail in the second person ("you"). Be specific and concise.', maxTokens: 220, timeoutMs: 45000 },
   );
-  const summary = out && out.length > 20 ? out : heuristic;
-  db.prepare('UPDATE trails SET summary = ?, summary_dirty = 0 WHERE id = ?').run(summary, id);
+  const useLlm = !!out && out.length > 20;
+  const summary = useLlm ? out! : heuristic;
+  store(summary, useLlm ? 'local' : 'heuristic'); // placeholder — upgrades to Engram once it extracts
   return summary;
 }
 
@@ -242,12 +258,130 @@ export async function searchTrails(
     out.set(d.id, { trail: d, why: 'keyword' });
   }
   // Engram semantic fills the rest — catches matches worded differently than the trail.
-  for (const hit of await engramSearch(userId, query, pool)) {
+  for (const hit of await engramSearch(userId, query)) {
     if (!hit.trailId) continue;
     const t = getTrail(hit.trailId);
     if (t && !out.has(t.id)) out.set(t.id, { trail: toDTO(t, now), why: 'semantic', snippet: hit.content?.slice(0, 200) });
   }
   return [...out.values()].filter(inCat).slice(0, limit);
+}
+
+// ---------- cross-trail research interests (locally GATED, Engram-synthesized) ----------
+//
+// An interest is NOT "a trail" — it's a theme the user is durably invested in. The local gate is the
+// guarantee against a firehose: a trail qualifies only if it's *recurring* (returned across sessions)
+// OR *deep* (a big rabbit hole), AND still recent. Qualifying trails are then clustered into themes
+// by centroid similarity (breadth). Engram synthesizes/names the survivors; it never decides the set.
+
+interface ThemeTrail {
+  id: string; label: string; centroid: Vec;
+  liveness: number; sessions: number; pages: number; lastActive: number;
+}
+interface Theme { trails: ThemeTrail[]; centroid: Vec; score: number; key: string }
+
+export interface InterestsResult {
+  source: 'engram' | 'local';
+  interests: { label: string; detail: string }[];
+}
+
+/** Trails that clear the durability gate: recurring OR deep, and still recent. */
+function qualifyingTrails(now: number): ThemeTrail[] {
+  const rows = db.prepare('SELECT * FROM trails').all() as unknown as TrailRow[];
+  const out: ThemeTrail[] = [];
+  for (const t of rows) {
+    if (t.page_count < cfg.MIN_TRAIL_PAGES) continue;
+    if (statusFor(t.page_count, t.last_active, now) === 'archived') continue;
+    const dwell = (db.prepare('SELECT COALESCE(SUM(total_dwell_ms),0) d FROM pages WHERE trail_id = ?')
+      .get(t.id) as { d: number }).d;
+    const recurring = t.session_count >= cfg.INTEREST_MIN_SESSIONS;
+    const deep = t.page_count >= cfg.INTEREST_DEEP_PAGES || dwell >= cfg.INTEREST_DEEP_DWELL_MS;
+    if (!recurring && !deep) continue;
+    const liveness = computeLiveness(t.page_count, t.session_count, t.last_active, now);
+    if (liveness < cfg.INTEREST_MIN_LIVENESS) continue;
+    let centroid: Vec = {};
+    try { centroid = JSON.parse(t.centroid || '{}'); } catch { /* ignore */ }
+    out.push({ id: t.id, label: t.label || t.id, centroid, liveness, sessions: t.session_count, pages: t.page_count, lastActive: t.last_active });
+  }
+  return out.sort((a, b) => b.liveness - a.liveness);
+}
+
+/** Greedy-cluster qualifying trails into themes by centroid similarity; rank by summed liveness. */
+function clusterThemes(trails: ThemeTrail[]): Theme[] {
+  const themes: Theme[] = [];
+  for (const t of trails) {
+    let best: Theme | null = null;
+    let bestScore = 0;
+    for (const th of themes) {
+      const s = cosine(t.centroid, th.centroid);
+      if (s > bestScore) { bestScore = s; best = th; }
+    }
+    if (best && bestScore >= cfg.INTEREST_THEME_THRESHOLD) {
+      best.trails.push(t);
+      for (const k in t.centroid) best.centroid[k] = (best.centroid[k] || 0) + t.centroid[k];
+    } else {
+      themes.push({ trails: [t], centroid: { ...t.centroid }, score: 0, key: '' });
+    }
+  }
+  for (const th of themes) {
+    th.score = th.trails.reduce((s, x) => s + x.liveness, 0) * (1 + 0.25 * (th.trails.length - 1));
+    th.key = topTokens(th.centroid, 4).join('-') || th.trails[0].id;
+  }
+  return themes.sort((a, b) => b.score - a.score);
+}
+
+function localName(th: Theme, now: number): { label: string; detail: string } {
+  const sessions = th.trails.reduce((s, x) => s + x.sessions, 0);
+  const lastActive = Math.max(...th.trails.map((x) => x.lastActive));
+  const n = th.trails.length;
+  const detail = `${n} trail${n > 1 ? 's' : ''} · ${sessions} session${sessions > 1 ? 's' : ''} · active ${relTime(lastActive, now)}`;
+  return { label: th.trails[0].label, detail };
+}
+
+/**
+ * Durable, cross-trail interests. The set is decided LOCALLY by the durability gate (never a
+ * firehose); Engram, when available, supplies the synthesized name for a theme (matched by key),
+ * otherwise the most-live trail's label stands in.
+ */
+export async function getInterests(userId: string): Promise<InterestsResult> {
+  const now = Date.now();
+  const themes = clusterThemes(qualifyingTrails(now)).slice(0, 8);
+  if (!themes.length) return { source: 'local', interests: [] };
+
+  let byKey = new Map<string, string>();
+  let usedEngram = false;
+  if (cfg.ENGRAM_ENABLED) {
+    const derived = await engramInterests(userId);
+    byKey = new Map(derived.filter((d) => d.key).map((d) => [d.key as string, d.content]));
+    usedEngram = byKey.size > 0;
+  }
+
+  const interests = themes.map((th) => {
+    const local = localName(th, now);
+    const synthesized = byKey.get(th.key);
+    return { label: synthesized || local.label, detail: local.detail };
+  });
+  return { source: usedEngram ? 'engram' : 'local', interests };
+}
+
+/**
+ * Assert the currently-qualifying interest themes to Engram so it can reconcile + name them. Only
+ * survivors of the local gate are ever pushed — this is the WRITE path, kept off the hot read path
+ * and called from the /zero checkpoint (the budget-appropriate moment).
+ */
+export async function syncInterests(userId: string): Promise<number> {
+  if (!cfg.ENGRAM_ENABLED) return 0;
+  const now = Date.now();
+  const themes = clusterThemes(qualifyingTrails(now)).slice(0, 8);
+  let n = 0;
+  for (const th of themes) {
+    const signal = [
+      `Recurring interest across ${th.trails.length} trail(s):`,
+      ...th.trails.map((t) => `${t.label} (${t.sessions} sessions, ${t.pages} pages)`),
+    ];
+    const ref = await engramAssertInterest(userId, th.key, signal);
+    if (ref) n++;
+  }
+  return n;
 }
 
 // ---------- "your week in tabs" ----------

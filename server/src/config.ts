@@ -49,6 +49,10 @@ loadEnv(ENV_PATH);
 
 export const DB_PATH = process.env.TABZERO_DB || join(DATA_DIR, 'tabzero.db');
 
+// Explicit user/Engram scope. Set to pin a fixed identity (reuse across resets/machines) or to switch
+// to a clean slate. When unset, a stable random id is generated once and stored in the local DB.
+export const USER_ID = (process.env.TABZERO_USER_ID || '').trim();
+
 export const HOST = '127.0.0.1';
 export const PORT = Number(process.env.TABZERO_PORT || 8787);
 export const TOKEN = process.env.TABZERO_TOKEN || 'tabzero-dev';
@@ -57,7 +61,12 @@ export const TOKEN = process.env.TABZERO_TOKEN || 'tabzero-dev';
 export const ENGRAM_API_KEY = process.env.ENGRAM_API_KEY || '';
 export const ENGRAM_BASE = process.env.ENGRAM_BASE || 'https://api.engram.weaviate.io/v1';
 export const ENGRAM_ENABLED = ENGRAM_API_KEY.length > 0;
+export const ENGRAM_TIMEOUT_MS = Number(process.env.TABZERO_ENGRAM_TIMEOUT_MS || 15000); // hard cap so a slow/unreachable endpoint can't hang the daemon or seed
+export const DEBUG = process.env.TABZERO_DEBUG === '1'; // set TABZERO_DEBUG=1 for verbose Engram retrieval logs
 export const TRAIL_TOPIC = process.env.TABZERO_TRAIL_TOPIC || 'TrailSummary';
+// User-scoped topic that accumulates durable cross-trail interests. One trail push can feed both
+// this and TrailSummary; lights up fully once the topic exists in the Engram project (local fallback otherwise).
+export const INTEREST_TOPIC = process.env.TABZERO_INTEREST_TOPIC || 'ResearchInterest';
 
 // LLM — OpenRouter preferred, else local `claude -p`, else heuristic.
 // Both defaults are deliberately cheap/fast models — all tasks here (naming, 3-sentence recaps,
@@ -76,6 +85,19 @@ export const MIN_TRAIL_PAGES = 2; // pages needed to graduate forming -> live
 export const DECAY_HALFLIFE_DAYS = 7;
 export const DORMANT_AFTER_DAYS = 3;
 export const ARCHIVE_AFTER_DAYS = 30;
+
+// Research interests are GATED so the layer stays meaningful — not every trail is an interest. A
+// theme qualifies only if it's durable: recurring across sessions OR a deep single trail, AND still
+// recent (liveness floor). Local enforces this gate; Engram only synthesizes/names the survivors.
+export const INTEREST_MIN_SESSIONS = 2;                 // recurring: returned across >=2 sessions
+export const INTEREST_DEEP_PAGES = 8;                   // deep: a big single-trail rabbit hole
+export const INTEREST_DEEP_DWELL_MS = 8 * 60 * 1000;    // ...or a lot of time invested
+export const INTEREST_MIN_LIVENESS = 0.5;               // recency floor — stale obsessions drop off
+// Local theme merge sits *below* the trail-assign threshold (0.26): trails similar enough to exceed
+// that are already one trail, so local clustering only catches the loosely-related [0.18,0.26) band.
+// The real cross-trail semantic merge (distinct words, same topic) is Engram's job — embeddings catch
+// what lexical centroids can't.
+export const INTEREST_THEME_THRESHOLD = 0.18;
 
 // Categories are a *growable* vocabulary: seeded from the fixed taxonomy, the LLM reuses an existing
 // one where it can and mints a new key only when nothing fits. This is the saturation backstop — a

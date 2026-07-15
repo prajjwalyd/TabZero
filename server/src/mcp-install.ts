@@ -84,6 +84,38 @@ function removeJson(path: string, rootKey: string): InstallResult {
   return { ok: true, detail: 'not present' };
 }
 
+/** Like upsertJson but for a nested key path, e.g. ['mcp','servers'] -> { mcp: { servers: { NAME } } }. */
+function upsertJsonPath(path: string, keys: string[], def: unknown): InstallResult {
+  const cfg = readJson(path);
+  if (cfg === null) return { ok: false, detail: `couldn't parse ${path} (left untouched)` };
+  let node: Record<string, any> = cfg;
+  for (const k of keys) {
+    if (typeof node[k] !== 'object' || node[k] === null) node[k] = {};
+    node = node[k];
+  }
+  node[NAME] = def;
+  writeJson(path, cfg);
+  return { ok: true, detail: path };
+}
+
+/** Remove NAME from a nested key path in a JSON config. */
+function removeJsonPath(path: string, keys: string[]): InstallResult {
+  if (!existsSync(path)) return { ok: true, detail: 'not present' };
+  const cfg = readJson(path);
+  if (cfg === null) return { ok: false, detail: `couldn't parse ${path} (left untouched)` };
+  let node: Record<string, any> = cfg;
+  for (const k of keys) {
+    if (typeof node?.[k] !== 'object' || node[k] === null) return { ok: true, detail: 'not present' };
+    node = node[k];
+  }
+  if (Object.prototype.hasOwnProperty.call(node, NAME)) {
+    delete node[NAME];
+    writeJson(path, cfg);
+    return { ok: true, detail: `removed from ${path}` };
+  }
+  return { ok: true, detail: 'not present' };
+}
+
 // A JSON target: same file, same rootKey, differing only in the server def shape.
 function jsonTarget(
   id: string, name: string, hint: string, path: string, rootKey: string,
@@ -154,6 +186,38 @@ function codex(): Target {
   };
 }
 
+function hermes(): Target {
+  // Hermes stores MCP servers as YAML in ~/.hermes/config.yaml. We have no YAML serializer here, so
+  // we let its own CLI own the merge (safer than hand-editing indentation-sensitive YAML).
+  return {
+    id: 'hermes', name: 'Hermes', hint: 'agent',
+    detected: () => onPath('hermes') || existsSync(home('.hermes')),
+    install: (cmd) => {
+      // `add` rejects an existing name, so clear it first for an idempotent re-install.
+      spawnSync('hermes', ['mcp', 'remove', NAME], { stdio: 'ignore' });
+      const r = spawnSync('hermes', ['mcp', 'add', NAME, '--command', cmd.command, '--args', ...cmd.args], { stdio: 'ignore' });
+      return r.status === 0
+        ? { ok: true, detail: 'hermes mcp add' }
+        : { ok: false, detail: 'hermes mcp add failed — run it manually' };
+    },
+    uninstall: () => {
+      const r = spawnSync('hermes', ['mcp', 'remove', NAME], { stdio: 'ignore' });
+      return { ok: true, detail: r.status === 0 ? 'hermes mcp remove' : 'not present (or set enabled: false in ~/.hermes/config.yaml)' };
+    },
+  };
+}
+
+function openclaw(): Target {
+  // OpenClaw nests servers under mcp.servers in ~/.openclaw/openclaw.json (not a top-level mcpServers).
+  const path = home('.openclaw', 'openclaw.json');
+  return {
+    id: 'openclaw', name: 'OpenClaw', hint: 'agent',
+    detected: () => onPath('openclaw') || existsSync(home('.openclaw')),
+    install: (cmd) => upsertJsonPath(path, ['mcp', 'servers'], { command: cmd.command, args: cmd.args }),
+    uninstall: () => removeJsonPath(path, ['mcp', 'servers']),
+  };
+}
+
 export function allTargets(): Target[] {
   const server = (cmd: McpCommand) => ({ command: cmd.command, args: cmd.args });
   return [
@@ -170,5 +234,9 @@ export function allTargets(): Target[] {
       'mcp', () => onPath('opencode') || existsSync(home('.config', 'opencode')),
       (cmd) => ({ type: 'local', command: [cmd.command, ...cmd.args], enabled: true })),
     codex(),
+    jsonTarget('pi', 'Pi', 'agent', home('.pi', 'agent', 'mcp.json'),
+      'mcpServers', () => onPath('pi') || existsSync(home('.pi', 'agent')), server),
+    hermes(),
+    openclaw(),
   ];
 }

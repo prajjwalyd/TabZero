@@ -42,6 +42,7 @@ export interface TrailRow {
   last_active: number;
   liveness: number;
   summary: string | null;
+  summary_source: string | null; // 'engram' | 'local' | 'heuristic' — local/heuristic are placeholders
   summary_dirty: number;
   label_dirty: number;
   engram_dirty: number;

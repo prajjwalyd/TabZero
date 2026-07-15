@@ -120,17 +120,21 @@ const pages = db.prepare('SELECT COUNT(*) c FROM pages').get() as { c: number };
 console.log(`[seed] user ${getUserId()} — ${pages.c} pages across ${trails.c} trails`);
 
 if (ENRICH) {
-  console.log('[seed] enriching labels + summaries via the LLM (this makes a few model calls)…');
   // Seed runs with the daemon stopped, so enrich every trail directly — no settle gate to respect.
   const ids = db.prepare('SELECT id FROM trails WHERE page_count >= 2 ORDER BY last_active DESC').all() as { id: string }[];
-  for (const { id } of ids) {
+  console.log(`[seed] enriching ${ids.length} trail(s) via the LLM — one or two model calls each, so this takes a minute…`);
+  for (let i = 0; i < ids.length; i++) {
+    const { id } = ids[i];
+    const tag = `  [${i + 1}/${ids.length}]`;
+    process.stdout.write(`${tag} labeling…`);
     await labelTrail(id);
+    process.stdout.write(' recapping…');
     await summarizeTrail(id, { force: true });
+    const t = db.prepare('SELECT label, category, summary_source FROM trails WHERE id = ?')
+      .get(id) as { label: string; category: string | null; summary_source: string | null };
+    console.log(`\r${tag} ${t.label}  ·  ${t.category || '?'}  ·  recap:${t.summary_source || 'n/a'}        `);
   }
-  const rows = db.prepare('SELECT label, category, page_count FROM trails WHERE page_count >= 2 ORDER BY last_active DESC').all() as
-    { label: string; category: string | null; page_count: number }[];
-  console.log('[seed] trails:');
-  for (const r of rows) console.log(`  [${(r.category || '?').padEnd(9)}] ${r.label} (${r.page_count}p)`);
+  console.log('[seed] enrichment done.');
 }
 
 console.log('[seed] done. Start the daemon with `pnpm backend`.');

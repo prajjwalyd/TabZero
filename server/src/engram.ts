@@ -2,11 +2,18 @@
 // Everything here is best-effort: a failed call logs to stderr and returns null/[] so the
 // local trail engine keeps working. The exact request/response shapes are guarded because
 // the REST reference is behind the console — adjust field names here if they differ.
+//
+// Design: we feed Engram RAW signal and let ITS pipeline do the memory work — extraction,
+// bounded reconciliation, and cross-trail interest derivation. Engram authors the memory; SQLite is
+// only the raw log. (Previously we pushed a pre-baked local summary, which reduced Engram to a
+// vector-search box — reconciliation had nothing to reconcile.)
 
-import { ENGRAM_API_KEY, ENGRAM_BASE, ENGRAM_ENABLED } from './config.js';
+import { ENGRAM_API_KEY, ENGRAM_BASE, ENGRAM_ENABLED, ENGRAM_TIMEOUT_MS, TRAIL_TOPIC, INTEREST_TOPIC, DEBUG } from './config.js';
 
 async function post(path: string, body: unknown): Promise<any | null> {
   if (!ENGRAM_ENABLED) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ENGRAM_TIMEOUT_MS);
   try {
     const r = await fetch(`${ENGRAM_BASE}${path}`, {
       method: 'POST',
@@ -15,6 +22,7 @@ async function post(path: string, body: unknown): Promise<any | null> {
         Authorization: `Bearer ${ENGRAM_API_KEY}`,
       },
       body: JSON.stringify(body),
+      signal: ctrl.signal,
     });
     const text = await r.text();
     let json: any = null;
@@ -25,26 +33,35 @@ async function post(path: string, body: unknown): Promise<any | null> {
     }
     return json;
   } catch (e) {
-    console.error('[engram] request failed:', (e as Error).message);
+    const msg = (e as Error).name === 'AbortError' ? `timed out after ${ENGRAM_TIMEOUT_MS}ms` : (e as Error).message;
+    console.error(`[engram] POST ${path} failed: ${msg}`);
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 /**
- * Upsert a trail's evolving memory. Because TrailSummary is property-scoped on `trail_id`
- * and bounded, Engram maintains exactly one memory per trail and rewrites/merges on each add.
+ * Feed a trail's RAW signal to Engram and let its pipeline extract + reconcile the memory. We send
+ * the label plus one atomic fact per page (NOT a finished summary), as an array of content strings,
+ * so Engram's extraction does the real work and its bounded, `trail_id`-scoped TrailSummary is
+ * rewritten/merged on every add — the memory evolves as the trail grows instead of us overwriting a
+ * blob. Because the same input can also populate a user-scoped ResearchInterest topic, one push
+ * feeds both the per-trail memory and the cross-trail interest layer.
  */
 export async function engramUpsertTrail(
   userId: string,
   trailId: string,
-  content: string,
+  contents: string[],
 ): Promise<string | null> {
   // Verified schema: input is a discriminated object; `string.content` is an array of strings.
-  // No `topic` field — routing to the TrailSummary topic happens via the trail_id scope property.
+  // No `topic` field — routing happens via the trail_id scope property (+ any user-scoped topics).
+  const content = contents.map((s) => s.trim()).filter(Boolean).slice(0, 40);
+  if (!content.length) return null;
   const res = await post('/memories', {
     user_id: userId,
     properties: { trail_id: trailId },
-    input: { string: { content: [content] } },
+    input: { string: { content } },
   });
   return res?.run_id ?? res?.runId ?? res?.id ?? null;
 }
@@ -52,11 +69,14 @@ export async function engramUpsertTrail(
 export interface EngramHit {
   content: string;
   trailId: string | null;
+  interestKey: string | null;
+  topic: string | null;
   score: number | null;
+  updatedAt: string | null;
 }
 
-/** Semantic necromancy: find the trail memory that best matches a natural-language query. */
-export async function engramSearch(userId: string, query: string, _limit = 5): Promise<EngramHit[]> {
+/** Raw semantic search over the user's Engram memories. Returns hits with topic + scope properties. */
+export async function engramSearch(userId: string, query: string): Promise<EngramHit[]> {
   // Verified: search takes { user_id, query } (no `limit`); returns { memories: [...] }.
   const res = await post('/memories/search', { query, user_id: userId });
   const items = res?.memories ?? res?.results ?? res?.data ?? [];
@@ -64,6 +84,79 @@ export async function engramSearch(userId: string, query: string, _limit = 5): P
   return items.map((m: any) => ({
     content: m?.content ?? m?.text ?? '',
     trailId: m?.properties?.trail_id ?? m?.trail_id ?? null,
+    interestKey: m?.properties?.interest_key ?? m?.interest_key ?? null,
+    topic: m?.topic ?? null,
     score: typeof m?.score === 'number' ? m.score : null,
+    updatedAt: m?.updated_at ?? m?.updatedAt ?? null,
   }));
+}
+
+/**
+ * Engram's current reconciled memory for one trail — the recap it authored from the raw signal,
+ * evolved across sessions. Null when Engram is off or the extraction hasn't landed yet (async
+ * pipeline), so callers fall back to a local recap until it does.
+ */
+export async function engramTrailMemory(userId: string, trailId: string, hint: string): Promise<string | null> {
+  if (!ENGRAM_ENABLED) return null;
+  const hits = await engramSearch(userId, hint || 'summary');
+  // Trail-topic hits only (exclude interest memories).
+  const trailHits = hits.filter((h) => !h.interestKey && (!h.topic || h.topic === TRAIL_TOPIC));
+  // Prefer an exact trail-scope match; otherwise fall back to the best-scoring trail memory for this
+  // label. Local trail ids churn across resets while the Engram memory keeps the old id, and some
+  // search responses omit the scope property — the label match reconnects the trail to its memory.
+  const scoped = trailHits.filter((h) => h.trailId === trailId);
+  const best = (scoped.length ? scoped : trailHits).sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0];
+  if (DEBUG) {
+    console.error(`[engram] trailMemory("${hint}") id=${trailId}: ${hits.length} hit(s), ${scoped.length} id-scoped -> ${best ? 'using ' + (best.trailId ?? 'unscoped') : 'none'}`);
+  }
+  const content = best?.content?.trim();
+  return content && content.length > 24 ? content : null;
+}
+
+/**
+ * Assert a *qualifying* research interest to Engram, scoped by a stable `interest_key` so Engram
+ * maintains one bounded, evolving memory per interest and reconciles/merges each assertion into it.
+ * Only durable themes (gated locally) are ever asserted — Engram is fed signal, never the firehose.
+ */
+export async function engramAssertInterest(
+  userId: string,
+  key: string,
+  contents: string[],
+): Promise<string | null> {
+  const content = contents.map((s) => s.trim()).filter(Boolean).slice(0, 20);
+  if (!content.length) return null;
+  const res = await post('/memories', {
+    user_id: userId,
+    properties: { interest_key: key },
+    input: { string: { content } },
+  });
+  return res?.run_id ?? res?.runId ?? res?.id ?? null;
+}
+
+export interface Interest { key: string | null; content: string; score: number | null }
+
+/**
+ * Read back the interests Engram has synthesized (keyed by `interest_key`, or on the configured
+ * ResearchInterest topic). Callers match these to their locally-gated themes to prefer Engram's
+ * phrasing; the local gate — not this read — is what decides which themes count.
+ */
+export async function engramInterests(
+  userId: string,
+  query = 'the user\'s main ongoing interests, themes, and projects',
+): Promise<Interest[]> {
+  if (!ENGRAM_ENABLED) return [];
+  const hits = await engramSearch(userId, query);
+  const seen = new Set<string>();
+  const out: Interest[] = [];
+  for (const h of hits) {
+    const key = h.interestKey;
+    // interest-layer memories: an explicit interest assertion, the configured topic, or a user-scoped
+    // memory that isn't a trail summary.
+    const isInterest = !!key || (INTEREST_TOPIC && h.topic === INTEREST_TOPIC) || (!h.trailId && h.topic !== TRAIL_TOPIC);
+    const c = h.content?.trim();
+    if (!isInterest || !c || seen.has(c)) continue;
+    seen.add(c);
+    out.push({ key, content: c, score: h.score });
+  }
+  return out.slice(0, 12);
 }
