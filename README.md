@@ -184,11 +184,8 @@ server/         Node daemon + trail engine + Engram client + MCP server (TypeScr
     mcp.ts          stdio MCP server (5 tools)
     cli.ts          the `tabzero` command (setup, install, key, uninstall)
 extension/      MV3 extension: capture (background) + popup UI (TypeScript, esbuild)
-docs/           internals.md (deep dive) · engram.md (Engram setup) · images/
-PLAN.md         original v1 design doc + competitive research + sources
+docs/           engram.md (Engram setup) · images/ (screenshots)
 ```
-
-**Deep dive:** **[docs/internals.md](docs/internals.md)** explains the data model, the clustering pipeline (with worked examples), decay, the Engram memory model, research-interest gating, and the MCP layer end to end.
 
 ---
 
