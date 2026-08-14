@@ -49,6 +49,7 @@
     "build": "pnpm run build:server && pnpm run build:ext",
     "typecheck": "tsc -p server/tsconfig.json --noEmit && tsc -p extension/tsconfig.json --noEmit",
     "test": "NODE_NO_WARNINGS=1 tsx --test server/test/*.test.ts",
+    "test:e2e": "NODE_NO_WARNINGS=1 tsx server/test/e2e.mts",
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {

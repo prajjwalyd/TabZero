@@ -181,7 +181,8 @@ server/         Node daemon + trail engine + Engram client + agent CLI (TypeScri
     daemon/         http.ts        localhost API the extension talks to
                     scheduler.ts   adaptive, backing-off enrichment scheduler
     scripts/        seed.ts (demo data) · reset.ts (clean slate)
-  test/           node:test units for canonicalization + decay math (`pnpm test`)
+  test/           hermetic units — canonicalization, decay, clustering, replay (`pnpm test`)
+                  e2e.mts — full lifecycle vs a real daemon + LLM + Engram (`pnpm test:e2e`)
 extension/      MV3 extension: capture (background) + popup UI (TypeScript, esbuild)
 docs/           engram.md (Engram setup) · images/ (screenshots)
 ```
