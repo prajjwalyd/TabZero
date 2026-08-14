@@ -9,10 +9,10 @@ import { fileURLToPath } from 'node:url';
 import { homedir, platform } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import {
-  intro, outro, password, confirm, spinner, note, log, isCancel, cancel,
+  intro, outro, password, confirm, spinner, log, isCancel, cancel,
 } from '@clack/prompts';
 import { ENV_PATH, DATA_DIR, PORT, TOKEN } from './core/config.js';
-import { cleanupAll } from './setup/mcp-install.js';
+import { VERSION } from './core/version.js';
 
 const REPO = 'https://github.com/prajjwalyd/TabZero';
 const DOCS_ENGRAM = `${REPO}/blob/main/docs/engram.md`;
@@ -269,19 +269,6 @@ async function cmdSetup(): Promise<void> {
   }
 }
 
-async function cmdMcpCleanup(): Promise<void> {
-  // Tab Zero used to register an MCP server into agent harnesses. That surface is gone (the CLI
-  // replaced it), but a leftover registration makes a harness fail to spawn a server on every
-  // launch — so purge them.
-  intro('Remove old MCP registrations');
-  const s = spinner();
-  s.start('Scanning agent configs…');
-  const lines = cleanupAll();
-  s.stop('Scan complete.');
-  note(lines.length ? lines.join('\n') : 'Nothing was registered — you\'re clean.', 'Removed');
-  outro('Done. Agents now query Tab Zero with the `tabzero` command instead.');
-}
-
 async function cmdKey(value?: string): Promise<void> {
   intro('Engram key');
   let key = value;
@@ -314,20 +301,10 @@ async function cmdUninstall(): Promise<void> {
   banner();
   intro('Uninstall');
 
-  // 1. Any leftover MCP registrations from before the CLI replaced that surface.
-  const removeMcp = bail(await confirm({ message: 'Remove old Tab Zero MCP registrations from your AI tools?', initialValue: true }));
-  if (removeMcp) {
-    const s = spinner();
-    s.start('Cleaning agent configs…');
-    const lines = cleanupAll();
-    s.stop('Agent configs cleaned.');
-    note(lines.length ? lines.join('\n') : 'Nothing was registered.', 'Removed');
-  }
-
-  // 2. The staged extension copy (always under ~/.tabzero).
+  // 1. The staged extension copy (always under ~/.tabzero).
   if (existsSync(EXT_DEST)) { rmSync(EXT_DEST, { recursive: true, force: true }); log.info('Removed the staged extension folder.'); }
 
-  // 3. All data — destructive, opt-in.
+  // 2. All data — destructive, opt-in.
   const wipe = bail(await confirm({
     message: `Delete ALL Tab Zero data (${DATA_DIR}) — trails, memory, and your saved Engram key? This cannot be undone.`,
     initialValue: false,
@@ -350,7 +327,7 @@ function usage(): void {
     '  tabzero start              Start the local daemon\n' +
     '  tabzero key [value]        Save your Weaviate Engram API key\n' +
     '  tabzero path               Print the extension folder to load unpacked\n' +
-    '  tabzero mcp-cleanup        Remove MCP registrations left by older versions\n' +
+    '  tabzero version            Print the installed version\n' +
     '  tabzero uninstall          Remove everything + (optionally) all data\n\n' +
     'Query your browsing memory (for you, or any agent with a shell):\n' +
     '  tabzero search [query]     Search trails; empty query lists all, newest first\n' +
@@ -375,7 +352,6 @@ switch (cmd) {
   case 'start': await cmdStart(); break;
   case 'key': await cmdKey(rest[0]); break;
   case 'path': cmdPath(); break;
-  case 'mcp-cleanup': await cmdMcpCleanup(); break;
   case 'uninstall': await cmdUninstall(); break;
 
   case 'search': await cmdSearch(arg, JSON_OUT); break;
@@ -391,6 +367,7 @@ switch (cmd) {
   case 'week': await cmdWeek(JSON_OUT); break;
   case 'interests': await cmdInterests(JSON_OUT); break;
 
+  case 'version': case '--version': case '-v': process.stdout.write(VERSION + '\n'); break;
   case 'help': case '--help': case '-h': usage(); break;
   default: usage(); process.exit(1);
 }

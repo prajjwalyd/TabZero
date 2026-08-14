@@ -1,4 +1,4 @@
-// Domain types shared across the backend + MCP server.
+// Domain types shared across the backend + CLI.
 // The extension talks to us over JSON so it keeps its own copy of the wire shapes.
 
 export type EventType = 'open' | 'activate' | 'navigate' | 'close' | 'meta';
@@ -54,7 +54,7 @@ export interface TrailRow {
   category: string | null; // LLM-assigned category key; null falls back to the heuristic
 }
 
-/** Trail as returned to the extension / MCP callers. */
+/** Trail as returned to the extension / CLI callers. */
 export interface TrailDTO {
   id: string;
   label: string;

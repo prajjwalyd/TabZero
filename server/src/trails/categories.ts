@@ -111,7 +111,7 @@ const SEED_LABEL: Record<string, string> = {
 // ---------- growable, table-backed vocabulary ----------
 
 // In-process cache of the vocabulary, lazily loaded and refreshed on mint/consolidate. The daemon
-// owns all writes; the MCP process only reads (filter help), so cross-process staleness of a
+// owns all writes; every other reader goes through it over HTTP, so cross-process staleness of a
 // freshly-minted key is cosmetic (it just isn't offered as a filter until that process restarts).
 let keyCache: Set<string> | null = null;
 let labelCache: Map<string, string> | null = null;

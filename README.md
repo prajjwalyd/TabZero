@@ -133,10 +133,6 @@ capture anything). Exit code is non-zero with a message on stderr when it isn't.
 Try it with any agent: _"resurrect my GPU pricing research"_ · _"what's my most abandoned trail this
 week?"_ · _"what have I been into lately?"_
 
-> **Upgrading from an older version?** Tab Zero used to ship an MCP server. The CLI replaced it —
-> run `npx tabzero mcp-cleanup` once to drop the stale registrations, or your harnesses will keep
-> trying to spawn a server that no longer exists.
-
 ---
 
 ## Your week in tabs
@@ -184,7 +180,6 @@ server/         Node daemon + trail engine + Engram client + agent CLI (TypeScri
                     sync.ts        enrichment passes + Engram flush (settle-gated)
     daemon/         http.ts        localhost API the extension talks to
                     scheduler.ts   adaptive, backing-off enrichment scheduler
-    setup/          mcp-install.ts purges MCP registrations left by older versions
     scripts/        seed.ts (demo data) · reset.ts (clean slate)
   test/           node:test units for canonicalization + decay math (`pnpm test`)
 extension/      MV3 extension: capture (background) + popup UI (TypeScript, esbuild)

@@ -5,7 +5,7 @@ Tab Zero works **without any key** — local trails, keyword search, categories,
 - **Engram authors your recaps** — instead of a local model, Engram's pipeline extracts and *reconciles* one evolving summary per trail from the raw browsing signal, and rewrites it as the trail grows.
 - **Semantic search** — resurrect a trail by meaning (*"that GPU I was looking at"*), not just keywords.
 - **Cross-trail research interests** — Engram synthesizes the durable themes you keep returning to (only the ones that clear the local durability gate are ever sent).
-- **Cross-agent memory** — the same reconciled memory any MCP agent (Claude Code, Codex, opencode…) can query.
+- **Cross-agent memory** — the same reconciled memory any agent (Claude Code, Codex, opencode…) can query through the `tabzero` CLI.
 
 Setup takes ~3 minutes and the free tier is plenty for personal use.
 
@@ -103,7 +103,7 @@ Stored in `~/.tabzero/.env` (or the repo `.env` in dev):
 
 - **Tab Zero pushes RAW signal, not a finished summary** — the trail label plus one atomic fact per page (title · description · domain). Engram's pipeline does the extraction and bounded reconciliation, so the memory *evolves* as the trail recurs instead of being a blob we overwrite.
 - **Engram authors the recap.** `summarizeTrail` prefers Engram's reconciled memory; a local `claude -p` / heuristic recap is only a placeholder shown until Engram's version lands, then it's replaced.
-- **Interests are gated locally.** A trail/theme becomes an interest only if it's *recurring* (returned across ≥2 sessions) **or** *deep* (a big rabbit hole), **and** still recent. Only qualifying themes are asserted to Engram (`interest_key`-scoped), which then names/reconciles them. The MCP `research_interests` tool and `GET /interests` return these.
+- **Interests are gated locally.** A trail/theme becomes an interest only if it's *recurring* (returned across ≥2 sessions) **or** *deep* (a big rabbit hole), **and** still recent. Only qualifying themes are asserted to Engram (`interest_key`-scoped), which then names/reconciles them. `tabzero interests` and `GET /interests` return these.
 
 ## Fresh start / reset
 
@@ -122,4 +122,4 @@ Engram has **no delete-all** in its REST API, so a new `user_id` is how you get 
 - **Privacy:** only page **titles**, **domains**, and the **public preview text** sites already publish (OpenGraph / meta description / the visible `h1`) are sent — never full page body, never anything you typed, never screenshots. Raw URLs stay local.
 - **Rebuildable:** the local DB (`~/.tabzero/tabzero.db`) is the source of truth, so your Engram memories can be fully replayed from it.
 - **Change the key later:** rerun `npx tabzero key`.
-- **MCP tools exposed:** `search_trails`, `get_trail`, `resurrect_trail`, `week_in_tabs`, `research_interests`.
+- **Agent commands exposed:** `tabzero search`, `tabzero trail`, `tabzero resurrect`, `tabzero week`, `tabzero interests` (add `--json`).
