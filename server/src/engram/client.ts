@@ -78,7 +78,6 @@ export async function engramUpsertTrail(
 export interface EngramHit {
   content: string;
   trailId: string | null;
-  interestKey: string | null;
   topic: string | null;
   score: number | null;
 }
@@ -92,7 +91,6 @@ export async function engramSearch(userId: string, query: string): Promise<Engra
   return items.map((m: any) => ({
     content: m?.content ?? m?.text ?? '',
     trailId: m?.properties?.trail_id ?? m?.trail_id ?? null,
-    interestKey: m?.properties?.interest_key ?? m?.interest_key ?? null,
     topic: m?.topic ?? null,
     score: typeof m?.score === 'number' ? m.score : null,
   }));
@@ -112,7 +110,7 @@ export async function engramTrailMemory(userId: string, trailId: string, hint: s
   // next read once extraction lands. Borrowing the best label match instead cross-contaminates
   // (one trail showing another's recap), which is worse than a short wait for the real one.
   const scoped = hits
-    .filter((h) => h.trailId === trailId && !h.interestKey && (!h.topic || h.topic === TRAIL_TOPIC))
+    .filter((h) => h.trailId === trailId && (!h.topic || h.topic === TRAIL_TOPIC))
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   const best = scoped[0];
   if (DEBUG) {
@@ -122,52 +120,13 @@ export async function engramTrailMemory(userId: string, trailId: string, hint: s
   return content && content.length > 24 ? content : null;
 }
 
-/**
- * Assert a *qualifying* research interest to Engram, scoped by a stable `interest_key` so Engram
- * maintains one bounded, evolving memory per interest and reconciles/merges each assertion into it.
- * Only durable themes (gated locally) are ever asserted — Engram is fed signal, never the firehose.
- */
-// Circuit breaker: once we learn the interest topic/scope isn't configured in this Engram project,
-// stop asserting for the rest of the process. It's a permanent config gap, not a transient error —
-// retrying would just spam the endpoint (4x per checkpoint) with the same 400.
-let interestScopeUnavailable = false;
-
-export async function engramAssertInterest(
-  userId: string,
-  key: string,
-  contents: string[],
-): Promise<string | null> {
-  if (interestScopeUnavailable) return null;
-  const content = contents.map((s) => s.trim()).filter(Boolean).slice(0, 20);
-  if (!content.length) return null;
-  const res = await post('/memories', {
-    user_id: userId,
-    properties: { interest_key: key },
-    input: { string: { content } },
-  });
-  if (!res.ok) {
-    // A 400 naming interest_key means the ResearchInterest topic (scope: interest_key) doesn't
-    // exist in this project. Disable interest sync for the session and say so once — trails and
-    // search are unaffected, so this is a soft degradation, not a failure.
-    if (res.status === 400 && /interest_key|not configured/i.test(res.errorText)) {
-      interestScopeUnavailable = true;
-      console.error(
-        '[engram] interest sync disabled for this session: the ResearchInterest topic ' +
-        '(scope: interest_key) is not configured in your Engram project. Add it (see docs/engram.md) ' +
-        'to enable cross-trail interests. Trails, recaps, and search are unaffected.',
-      );
-    }
-    return null;
-  }
-  return res.json?.run_id ?? res.json?.runId ?? res.json?.id ?? null;
-}
-
-export interface Interest { key: string | null; content: string; score: number | null }
+export interface Interest { content: string; score: number | null }
 
 /**
- * Read back the interests Engram has synthesized (keyed by `interest_key`, or on the configured
- * ResearchInterest topic). Callers match these to their locally-gated themes to prefer Engram's
- * phrasing; the local gate — not this read — is what decides which themes count.
+ * The interests Engram has synthesized on the ResearchInterest topic. Its own topic description
+ * applies the durability rule and merges near-duplicates, so these are returned as-is — the caller
+ * does not re-gate them. Memories carry no scope property (the topic is user-scoped), which is why
+ * nothing here filters on one; requiring a property was what made this whole layer read as "local".
  */
 export async function engramInterests(
   userId: string,
@@ -178,14 +137,13 @@ export async function engramInterests(
   const seen = new Set<string>();
   const out: Interest[] = [];
   for (const h of hits) {
-    const key = h.interestKey;
-    // interest-layer memories: an explicit interest assertion, the configured topic, or a user-scoped
-    // memory that isn't a trail summary.
-    const isInterest = !!key || (INTEREST_TOPIC && h.topic === INTEREST_TOPIC) || (!h.trailId && h.topic !== TRAIL_TOPIC);
+    // The configured interest topic, or — if it was renamed without setting TABZERO_INTEREST_TOPIC —
+    // any user-scoped memory that isn't a trail summary.
+    const isInterest = h.topic === INTEREST_TOPIC || (!h.trailId && h.topic !== TRAIL_TOPIC);
     const c = h.content?.trim();
     if (!isInterest || !c || seen.has(c)) continue;
     seen.add(c);
-    out.push({ key, content: c, score: h.score });
+    out.push({ content: c, score: h.score });
   }
   return out.slice(0, 12);
 }

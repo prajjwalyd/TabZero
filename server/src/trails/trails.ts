@@ -1,7 +1,7 @@
 import { db, getUserId } from '../core/db.js';
-import { topTokens, provisionalLabel, cosine, type Vec } from '../capture/canonical.js';
+import { topTokens, provisionalLabel, type Vec } from '../capture/canonical.js';
 import { llmText } from '../core/llm.js';
-import { engramSearch, engramTrailMemory, engramInterests, engramAssertInterest } from '../engram/client.js';
+import { engramSearch, engramTrailMemory, engramInterests } from '../engram/client.js';
 import { categorize, resolveCategory, knownCategory, categoryPromptList } from './categories.js';
 import * as cfg from '../core/config.js';
 import type { TrailRow, PageRow, TrailDTO, PageDTO, TrailDetail, TrailStatus } from '../core/types.js';
@@ -91,23 +91,26 @@ function trailUrls(id: string): string[] {
 }
 
 /**
- * URLs to actually reopen when resurrecting. Prefers the working set from the most recent
- * "tab zero" checkpoint that included this trail — i.e. the tabs you had open together last time
- * you set the topic down — and falls back to the trail's full history if it was never checkpointed.
+ * URLs to reopen when resurrecting: the working set from the most recent "tab zero" that included this
+ * trail — the tabs you had open together when you set the topic down — UNION anything visited since.
+ *
+ * The union is the important half. Taking the checkpoint alone replays a stale snapshot: resume a
+ * trail after zeroing it, browse five more pages without zeroing again, and those five silently never
+ * reopen. Falls back to full history for a trail that was never checkpointed.
  */
 export function resurrectUrls(id: string): string[] {
   const cp = db.prepare('SELECT MAX(checkpoint_id) m FROM checkpoint_pages WHERE trail_id = ?')
     .get(id) as { m: number | null } | undefined;
-  if (cp?.m) {
-    const rows = db.prepare(
-      `SELECT p.url FROM checkpoint_pages cx
-         JOIN pages p ON p.canonical_url = cx.canonical_url
-        WHERE cx.checkpoint_id = ? AND cx.trail_id = ?
-        ORDER BY p.last_seen ASC`,
-    ).all(cp.m, id) as { url: string }[];
-    if (rows.length) return rows.map((r) => r.url);
-  }
-  return trailUrls(id);
+  if (!cp?.m) return trailUrls(id);
+  const rows = db.prepare(
+    `SELECT p.url FROM pages p
+       WHERE p.trail_id = ?
+         AND (p.canonical_url IN (SELECT canonical_url FROM checkpoint_pages
+                                   WHERE checkpoint_id = ? AND trail_id = ?)
+              OR p.last_seen > (SELECT ts FROM checkpoints WHERE id = ?))
+       ORDER BY p.last_seen ASC`,
+  ).all(id, cp.m, id, cp.m) as { url: string }[];
+  return rows.length ? rows.map((r) => r.url) : trailUrls(id);
 }
 
 export async function getTrailDetail(id: string, opts: { summarize?: boolean } = {}): Promise<TrailDetail | null> {
@@ -259,122 +262,77 @@ export async function searchTrails(
   return [...out.values()].slice(0, limit);
 }
 
-// ---------- cross-trail research interests (locally GATED, Engram-synthesized) ----------
+// ---------- cross-trail research interests ----------
 //
-// An interest is NOT "a trail" — it's a theme the user is durably invested in. The local gate is the
-// guarantee against a firehose: a trail qualifies only if it's *recurring* (returned across sessions)
-// OR *deep* (a big rabbit hole), AND still recent. Qualifying trails are then clustered into themes
-// by centroid similarity (breadth). Engram synthesizes/names the survivors; it never decides the set.
-
-interface ThemeTrail {
-  id: string; label: string; centroid: Vec;
-  liveness: number; sessions: number; pages: number; lastActive: number;
-}
-interface Theme { trails: ThemeTrail[]; centroid: Vec; score: number; key: string }
+// An interest is NOT "a trail" — it's a theme you are durably invested in, spanning several trails.
+// That distinction is why Engram owns this layer: trails similar enough to cluster lexically have
+// ALREADY been merged into one trail at ingestion (ASSIGN_THRESHOLD), so a local centroid clustering
+// pass can only ever produce single-trail "themes" — it measured 6 qualifying trails into 5 themes on
+// real data, i.e. a relabelled trail list. Genuine cross-trail synthesis needs embeddings.
+//
+// Engram's ResearchInterest topic description already carries the durability rule ("form an interest
+// ONLY when a theme is durable ... do NOT create one from a single trail, a one-off lookup, or
+// ephemeral browsing") and is told to merge aggressively into one evolving memory per interest. It
+// applies that rule to the raw signal we push per trail, so no separate assertion pass is needed —
+// and in practice it is far stricter than a local gate can be: 2 interests from 19 trails, correctly
+// ignoring a cricket final and a one-off comic lookup that a local gate happily admitted.
 
 export interface InterestsResult {
   source: 'engram' | 'local';
-  interests: { label: string; detail: string }[];
+  interests: { label: string; detail?: string }[];
 }
 
-/** Trails that clear the durability gate: recurring OR deep, and still recent. */
-function qualifyingTrails(now: number): ThemeTrail[] {
+interface DurableTrail {
+  id: string; label: string; liveness: number; sessions: number; pages: number; lastActive: number;
+}
+
+/**
+ * Local fallback for when Engram is off: trails durable enough to read as an ongoing interest.
+ * Mirrors the ResearchInterest rule — recurring across sessions, or a sustained deep investigation —
+ * with NO dwell-only branch. Thirty minutes across four pages in a single sitting is an absorbing
+ * afternoon (a sports final, a comparison table), not an interest; that branch is what let
+ * "India vs New Zealand T20 Final" present itself as durable research.
+ */
+function durableTrails(now: number): DurableTrail[] {
   const rows = db.prepare('SELECT * FROM trails').all() as unknown as TrailRow[];
-  const out: ThemeTrail[] = [];
+  const out: DurableTrail[] = [];
   for (const t of rows) {
     if (t.page_count < cfg.MIN_TRAIL_PAGES) continue;
     if (statusFor(t.page_count, t.last_active, now) === 'archived') continue;
-    const dwell = (db.prepare('SELECT COALESCE(SUM(total_dwell_ms),0) d FROM pages WHERE trail_id = ?')
-      .get(t.id) as { d: number }).d;
     const recurring = t.session_count >= cfg.INTEREST_MIN_SESSIONS;
-    const deep = t.page_count >= cfg.INTEREST_DEEP_PAGES || dwell >= cfg.INTEREST_DEEP_DWELL_MS;
+    const deep = t.page_count >= cfg.INTEREST_DEEP_PAGES;
     if (!recurring && !deep) continue;
     const liveness = computeLiveness(t.page_count, t.session_count, t.last_active, now);
     if (liveness < cfg.INTEREST_MIN_LIVENESS) continue;
-    let centroid: Vec = {};
-    try { centroid = JSON.parse(t.centroid || '{}'); } catch { /* ignore */ }
-    out.push({ id: t.id, label: t.label || t.id, centroid, liveness, sessions: t.session_count, pages: t.page_count, lastActive: t.last_active });
+    out.push({
+      id: t.id, label: t.label || t.id, liveness,
+      sessions: t.session_count, pages: t.page_count, lastActive: t.last_active,
+    });
   }
   return out.sort((a, b) => b.liveness - a.liveness);
 }
 
-/** Greedy-cluster qualifying trails into themes by centroid similarity; rank by summed liveness. */
-function clusterThemes(trails: ThemeTrail[]): Theme[] {
-  const themes: Theme[] = [];
-  for (const t of trails) {
-    let best: Theme | null = null;
-    let bestScore = 0;
-    for (const th of themes) {
-      const s = cosine(t.centroid, th.centroid);
-      if (s > bestScore) { bestScore = s; best = th; }
-    }
-    if (best && bestScore >= cfg.INTEREST_THEME_THRESHOLD) {
-      best.trails.push(t);
-      for (const k in t.centroid) best.centroid[k] = (best.centroid[k] || 0) + t.centroid[k];
-    } else {
-      themes.push({ trails: [t], centroid: { ...t.centroid }, score: 0, key: '' });
-    }
-  }
-  for (const th of themes) {
-    th.score = th.trails.reduce((s, x) => s + x.liveness, 0) * (1 + 0.25 * (th.trails.length - 1));
-    th.key = topTokens(th.centroid, 4).join('-') || th.trails[0].id;
-  }
-  return themes.sort((a, b) => b.score - a.score);
-}
-
-function localName(th: Theme, now: number): { label: string; detail: string } {
-  const sessions = th.trails.reduce((s, x) => s + x.sessions, 0);
-  const lastActive = Math.max(...th.trails.map((x) => x.lastActive));
-  const n = th.trails.length;
-  const detail = `${n} trail${n > 1 ? 's' : ''} · ${sessions} session${sessions > 1 ? 's' : ''} · active ${relTime(lastActive, now)}`;
-  return { label: th.trails[0].label, detail };
-}
-
 /**
- * Durable, cross-trail interests. The set is decided LOCALLY by the durability gate (never a
- * firehose); Engram, when available, supplies the synthesized name for a theme (matched by key),
- * otherwise the most-live trail's label stands in.
+ * Durable research interests. Engram's synthesized memories ARE the answer when it has any — they are
+ * cross-trail, already deduped, and carry current state ("evaluating X, currently leaning Y"). The
+ * local list is a strictly weaker stand-in used only when Engram is off or has not extracted yet, and
+ * it says so via `source` rather than pretending the two are equivalent.
  */
 export async function getInterests(userId: string): Promise<InterestsResult> {
-  const now = Date.now();
-  const themes = clusterThemes(qualifyingTrails(now)).slice(0, 8);
-  if (!themes.length) return { source: 'local', interests: [] };
-
-  let byKey = new Map<string, string>();
-  let usedEngram = false;
   if (cfg.ENGRAM_ENABLED) {
     const derived = await engramInterests(userId);
-    byKey = new Map(derived.filter((d) => d.key).map((d) => [d.key as string, d.content]));
-    usedEngram = byKey.size > 0;
+    if (derived.length) {
+      return { source: 'engram', interests: derived.slice(0, 8).map((d) => ({ label: d.content })) };
+    }
   }
-
-  const interests = themes.map((th) => {
-    const local = localName(th, now);
-    const synthesized = byKey.get(th.key);
-    return { label: synthesized || local.label, detail: local.detail };
-  });
-  return { source: usedEngram ? 'engram' : 'local', interests };
-}
-
-/**
- * Assert the currently-qualifying interest themes to Engram so it can reconcile + name them. Only
- * survivors of the local gate are ever pushed — this is the WRITE path, kept off the hot read path
- * and called from the /zero checkpoint (the budget-appropriate moment).
- */
-export async function syncInterests(userId: string): Promise<number> {
-  if (!cfg.ENGRAM_ENABLED) return 0;
   const now = Date.now();
-  const themes = clusterThemes(qualifyingTrails(now)).slice(0, 8);
-  let n = 0;
-  for (const th of themes) {
-    const signal = [
-      `Recurring interest across ${th.trails.length} trail(s):`,
-      ...th.trails.map((t) => `${t.label} (${t.sessions} sessions, ${t.pages} pages)`),
-    ];
-    const ref = await engramAssertInterest(userId, th.key, signal);
-    if (ref) n++;
-  }
-  return n;
+  return {
+    source: 'local',
+    interests: durableTrails(now).slice(0, 8).map((t) => ({
+      label: t.label,
+      detail: `${t.pages} pages · ${t.sessions} session${t.sessions > 1 ? 's' : ''} · active ${relTime(t.lastActive, now)}`,
+    })),
+  };
 }
 
 // ---------- "your week in tabs" ----------

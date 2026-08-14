@@ -153,7 +153,12 @@ function assignTrail(canon: Canon, tokens: string[], ev: TabEventInput): string 
     let cen: Vec = {};
     try { cen = JSON.parse(t.centroid || '{}'); } catch { /* ignore */ }
     let score = cosine(pv, cen);
-    if (ev.ts - t.last_active < cfg.RECENCY_WINDOW_MS) score += cfg.RECENCY_BONUS;
+    // The bonus means "this trail was active shortly BEFORE this page", so it needs a non-negative
+    // delta. Without the `dt >= 0` guard a trail whose last_active is newer than the incoming event
+    // — routine with out-of-order events inside a batch, or a replayed one — collected the bonus for
+    // free, and 0.15 is enough to drag a page over ASSIGN_THRESHOLD on one incidental shared token.
+    const dt = ev.ts - t.last_active;
+    if (dt >= 0 && dt < cfg.RECENCY_WINDOW_MS) score += cfg.RECENCY_BONUS;
     if (!best || score > best.score) best = { id: t.id, score };
   }
   if (best && best.score >= cfg.ASSIGN_THRESHOLD) return addToTrail(best.id, tokens, ev.ts);

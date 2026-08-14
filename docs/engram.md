@@ -4,7 +4,7 @@ Tab Zero works **without any key** — local trails, keyword search, categories,
 
 - **Engram authors your recaps** — instead of a local model, Engram's pipeline extracts and *reconciles* one evolving summary per trail from the raw browsing signal, and rewrites it as the trail grows.
 - **Semantic search** — resurrect a trail by meaning (*"that GPU I was looking at"*), not just keywords.
-- **Cross-trail research interests** — Engram synthesizes the durable themes you keep returning to (only the ones that clear the local durability gate are ever sent).
+- **Cross-trail research interests** — Engram synthesizes the durable themes you keep returning to, deciding for itself which are durable enough to count (its topic description carries that rule).
 - **Cross-agent memory** — the same reconciled memory any agent (Claude Code, Codex, opencode…) can query through the `tabzero` CLI.
 
 Setup takes ~3 minutes and the free tier is plenty for personal use.
@@ -49,8 +49,12 @@ and visit patterns provided.
 |---|---|
 | **Name** | `ResearchInterest` |
 | **User-scoped** | **On** |
-| **Property scope** | add one: `interest_key` |
+| **Property scope** | **leave empty** — see the note below |
 | **Bounded** | **On** — one evolving memory per interest |
+
+> ⚠️ **Do not add a property scope to this topic.** Interests are derived from the very same per-trail
+> signal Tab Zero pushes for `TrailSummary` — one input can populate both topics. A required scope
+> property would mean nothing ever reaches `ResearchInterest`, and you would get no interests at all.
 
 **Description:**
 
@@ -72,7 +76,7 @@ Merge aggressively: when new browsing matches an existing interest, UPDATE and s
 than spawning a near-duplicate. One evolving memory per genuine interest.
 ```
 
-> Both are **user-scoped + property-scoped + bounded**, so Engram keeps exactly one evolving memory per `trail_id` / `interest_key` instead of piling up duplicates. Tab Zero already gates interests locally (a theme must be *recurring* or *deep* and still recent) and only asserts the survivors — so this topic is never fed the firehose. Rename the topics freely if you also set `TABZERO_TRAIL_TOPIC` / `TABZERO_INTEREST_TOPIC` to match.
+> `TrailSummary` is user-scoped **+ property-scoped on `trail_id` +** bounded, so Engram keeps exactly one evolving recap per trail. `ResearchInterest` is user-scoped **+** bounded only: it draws on every trail, so scoping it to one would defeat the point. Both descriptions do the real work — `ResearchInterest`'s is what tells Engram to form an interest only from a genuinely durable theme and to merge near-duplicates rather than pile them up, so Tab Zero shows what Engram returns without re-gating it. With no key set, Tab Zero falls back to listing your most durable individual trails and labels the result `local`. Rename the topics freely if you also set `TABZERO_TRAIL_TOPIC` / `TABZERO_INTEREST_TOPIC` to match.
 
 ## 3. Copy your API key
 
@@ -103,7 +107,7 @@ Stored in `~/.tabzero/.env` (or the repo `.env` in dev):
 
 - **Tab Zero pushes RAW signal, not a finished summary** — the trail label plus one atomic fact per page (title · description · domain). Engram's pipeline does the extraction and bounded reconciliation, so the memory *evolves* as the trail recurs instead of being a blob we overwrite.
 - **Engram authors the recap.** `summarizeTrail` prefers Engram's reconciled memory; a local `claude -p` / heuristic recap is only a placeholder shown until Engram's version lands, then it's replaced.
-- **Interests are gated locally.** A trail/theme becomes an interest only if it's *recurring* (returned across ≥2 sessions) **or** *deep* (a big rabbit hole), **and** still recent. Only qualifying themes are asserted to Engram (`interest_key`-scoped), which then names/reconciles them. `tabzero interests` and `GET /interests` return these.
+- **Interests are Engram's judgement.** The `ResearchInterest` topic description tells it to form an interest only from a durable theme — recurring across trails/sessions, or a sustained investigation — and never from a one-off lookup or ephemeral browsing. It draws on the same per-trail signal already being pushed, so there is no separate assertion pass. Without a key, Tab Zero falls back to listing your most durable individual trails (recurring across ≥2 sessions, or ≥8 pages, and still recent) and reports `source: local`. `tabzero interests` and `GET /interests` return these.
 
 ## Fresh start / reset
 

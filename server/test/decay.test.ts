@@ -10,6 +10,7 @@ import { join } from 'node:path';
 const tmp = mkdtempSync(join(tmpdir(), 'tabzero-test-'));
 process.env.TABZERO_DATA = tmp;
 process.env.TABZERO_USER_ID = 'test-user';
+process.env.ENGRAM_API_KEY = ''; // never reach the network from a unit test
 
 const { computeLiveness, statusFor, listTrails } = await import('../src/trails/trails.ts');
 const { db } = await import('../src/core/db.ts');
@@ -74,4 +75,32 @@ test('listTrails hides archived and forming trails, and --all reveals archived',
   assert.ok(ids({ includeArchived: true }).includes('t_arch'), '--all should reveal archived');
   assert.ok(ids({ includeArchived: true }).includes('t_live'), '--all should still show live');
   assert.ok(!ids({ includeArchived: true }).includes('t_form'), 'forming stays hidden either way');
+});
+
+// The local interest fallback used to admit `dwell >= 8min` on its own, which let a single absorbing
+// sitting ("India vs New Zealand T20 Final" — 4 pages, 31 minutes, 1 session) present itself as a
+// durable research interest. Durability now means recurrence across sessions or real depth.
+test('the local interest fallback needs recurrence or depth, not just a long sitting', async () => {
+  const { getInterests } = await import('../src/trails/trails.ts');
+  const now = Date.now();
+  const ins = db.prepare(
+    `INSERT INTO trails (id, label, created, last_active, centroid, page_count, session_count)
+     VALUES (?, ?, ?, ?, '{}', ?, ?)`,
+  );
+  ins.run('t_rec', 'Recurring theme', now, now, 4, 2);        // returned across sessions -> qualifies
+  ins.run('t_deep', 'Deep investigation', now, now, 10, 1);   // sustained depth -> qualifies
+  ins.run('t_sitting', 'One long sitting', now, now, 4, 1);   // neither -> must not qualify
+
+  // Dwell is irrelevant now, so give the disqualified trail plenty of it.
+  db.prepare(
+    `INSERT INTO pages (canonical_url, url, title, domain, first_seen, last_seen, visit_count, total_dwell_ms, trail_id, tokens)
+     VALUES ('https://x.test/a', 'https://x.test/a', 'a', 'x.test', ?, ?, 1, ?, 't_sitting', '[]')`,
+  ).run(now, now, 45 * 60 * 1000);
+
+  const res = await getInterests('test-user');
+  assert.equal(res.source, 'local', 'no Engram key in this test, so the fallback must be used');
+  const labels = res.interests.map((i) => i.label);
+  assert.ok(labels.includes('Recurring theme'), 'recurrence qualifies');
+  assert.ok(labels.includes('Deep investigation'), 'depth qualifies');
+  assert.ok(!labels.includes('One long sitting'), '45 minutes in one session is not a durable interest');
 });

@@ -99,6 +99,24 @@ test('a re-delivered batch cannot inflate visit_count (regression: one real visi
   assert.equal(visitsOf(canonical), 2, 'a real later revisit must still be counted');
 });
 
+// The recency bonus is worth 0.15 against a 0.26 threshold, so it decides borderline merges on its
+// own. It must only apply when the trail was active BEFORE the incoming page. Out-of-order events
+// inside one batch are routine, and an unguarded `ev.ts - last_active < WINDOW` is true for every
+// negative delta — which merged a van-electrical page into a Google sign-in trail on the strength of
+// one incidental shared token ("example"), scoring 0.1690 + 0.15.
+test('a trail active AFTER an incoming page gets no recency bonus (no backwards merge)', () => {
+  nav(700, 'https://accounts.example.com/v3/signin/identifier?continue=z', 'Sign in', T0 + 500_000);
+  nav(700, 'https://accounts.example.com/v3/signin/identifier?continue=z', 'Sign in', T0 + 86_400_000);
+  const signin = trailOf('https://accounts.example.com/v3/signin/identifier?continue=z');
+
+  // Older than that trail's last_active, and sharing exactly one incidental token with it ("example"
+  // from the domain). Vocabulary is kept disjoint from every other fixture in this file so the
+  // assertion can only fail for the reason under test.
+  nav(701, 'https://astronomy.example.com/telescopes/collimation-guide', 'Collimation Guide For Newtonian Telescopes', T0 + 400_000);
+  assert.notEqual(trailOf('https://astronomy.example.com/telescopes/collimation-guide'), signin,
+    'a weak lexical match must not be promoted by a bonus the trail did not earn');
+});
+
 test('resurrection prefers the checkpoint working set over the full trail history', () => {
   // Three pages in one trail; only two of them were open at "tab zero".
   const a = 'https://vanlife.example.com/electrical/solar-sizing';
@@ -118,6 +136,14 @@ test('resurrection prefers the checkpoint working set over the full trail histor
   ins.run(cp, c, trail);
 
   assert.deepEqual(resurrectUrls(trail), [a, c], 'should reopen the working set, in last_seen order');
+
+  // Resume the trail after that checkpoint without zeroing again. The newer page has to join the
+  // reopen set — taking the checkpoint alone would replay a stale snapshot and silently drop it.
+  const d = 'https://vanlife.example.com/electrical/fuse-block-layout';
+  nav(21, d, 'Fuse Block Layout For Van Electrical', T0 + 40_000);
+  assert.equal(trailOf(d), trail, 'the follow-up page should land in the same trail');
+  assert.deepEqual(resurrectUrls(trail), [a, c, d], 'checkpoint set UNION anything seen since');
+  assert.ok(!resurrectUrls(trail).includes(b), 'a page closed before the checkpoint stays out');
 
   // A trail that was never checkpointed has nothing better than its own history.
   const other = trailOf('https://allrecipes.com/recipe/sourdough-starter')!;

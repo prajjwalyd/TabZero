@@ -104,18 +104,14 @@ export const DECAY_HALFLIFE_DAYS = 7;
 export const DORMANT_AFTER_DAYS = 3;
 export const ARCHIVE_AFTER_DAYS = 30;
 
-// Research interests are GATED so the layer stays meaningful — not every trail is an interest. A
-// theme qualifies only if it's durable: recurring across sessions OR a deep single trail, AND still
-// recent (liveness floor). Local enforces this gate; Engram only synthesizes/names the survivors.
+// Research interests come from Engram's ResearchInterest topic, whose description carries the
+// durability rule and merges near-duplicates. These constants gate only the LOCAL FALLBACK shown when
+// Engram is off or hasn't extracted yet: a trail stands in for an interest if it recurs across
+// sessions or is a deep investigation, and is still recent. There is deliberately no dwell-only
+// branch — a long single sitting is an absorbing afternoon, not a durable interest.
 export const INTEREST_MIN_SESSIONS = 2;                 // recurring: returned across >=2 sessions
 export const INTEREST_DEEP_PAGES = 8;                   // deep: a big single-trail rabbit hole
-export const INTEREST_DEEP_DWELL_MS = 8 * 60 * 1000;    // ...or a lot of time invested
 export const INTEREST_MIN_LIVENESS = 0.5;               // recency floor — stale obsessions drop off
-// Local theme merge sits *below* the trail-assign threshold (0.26): trails similar enough to exceed
-// that are already one trail, so local clustering only catches the loosely-related [0.18,0.26) band.
-// The real cross-trail semantic merge (distinct words, same topic) is Engram's job — embeddings catch
-// what lexical centroids can't.
-export const INTEREST_THEME_THRESHOLD = 0.18;
 
 // Categories are a *growable* vocabulary: seeded from the fixed taxonomy, the LLM reuses an existing
 // one where it can and mints a new key only when nothing fits. This is the saturation backstop — a

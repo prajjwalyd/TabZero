@@ -100,7 +100,7 @@ Create two topics at [console.weaviate.cloud/engram](https://console.weaviate.cl
 | Topic | User-scoped | Property scope | Bounded | Role |
 |---|:---:|---|:---:|---|
 | `TrailSummary` | ✅ | `trail_id` | ✅ | one evolving recap per trail |
-| `ResearchInterest` | ✅ | `interest_key` | ✅ | durable cross-trail interests |
+| `ResearchInterest` | ✅ | _(none)_ | ✅ | durable cross-trail interests |
 
 Then `npx tabzero key`, paste your `eng_…` key, and restart the daemon. The popup's status-dot tooltip will read `engram on`, and search results tagged **memory** (green) are coming from Engram.
 
