@@ -1,6 +1,5 @@
 node_modules/
 dist/
-.output/
 .tabzero/
 *.log
 .DS_Store

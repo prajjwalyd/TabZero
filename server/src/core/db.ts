@@ -21,8 +21,12 @@ CREATE TABLE IF NOT EXISTS events (
   title         TEXT,
   favicon       TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_events_ts  ON events(ts);
-CREATE INDEX IF NOT EXISTS idx_events_tab ON events(tab_id);
+-- Deliberately unindexed. events is an append-only log written on every captured tab event, and the
+-- single query that reads it back (trails.ts::weekInTabs) is a bounded ORDER BY id DESC LIMIT scan
+-- that rides the implicit rowid order. Indexes on ts/tab_id were being maintained on every insert
+-- and used by nothing; DROP so databases created earlier stop paying for them too.
+DROP INDEX IF EXISTS idx_events_ts;
+DROP INDEX IF EXISTS idx_events_tab;
 
 CREATE TABLE IF NOT EXISTS pages (
   canonical_url  TEXT PRIMARY KEY,

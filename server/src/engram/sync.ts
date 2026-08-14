@@ -58,10 +58,10 @@ export async function enrichSettled(
  * trails done, so it's the right moment to spend the budget.
  */
 export async function flushEngram(
-  opts: { limit?: number; force?: boolean; onlyTrails?: string[] } = {},
+  opts: { limit?: number; force?: boolean } = {},
 ): Promise<{ pushed: number; pending: number }> {
   if (!cfg.ENGRAM_ENABLED) return { pushed: 0, pending: 0 };
-  const { limit = 20, force = false, onlyTrails } = opts;
+  const { limit = 20, force = false } = opts;
   const userId = getUserId();
   const now = Date.now();
 
@@ -73,11 +73,6 @@ export async function flushEngram(
     conds.push('(last_engram_push IS NULL OR last_engram_push <= ?)');
     args.push(now - cfg.ENGRAM_MIN_REPUSH_MS);
   }
-  if (onlyTrails && onlyTrails.length) {
-    conds.push(`id IN (${onlyTrails.map(() => '?').join(',')})`);
-    args.push(...onlyTrails);
-  }
-
   const pending = (db.prepare(
     'SELECT COUNT(*) c FROM trails WHERE engram_dirty = 1 AND page_count >= ?',
   ).get(cfg.MIN_TRAIL_PAGES) as { c: number }).c;

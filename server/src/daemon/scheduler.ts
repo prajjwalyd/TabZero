@@ -38,7 +38,7 @@ async function runEnrich(): Promise<void> {
   enrichTimer = null;
   enrichBusy = true;
   try {
-    const { processed, pending } = await enrichSettled(3, 1);
+    const { processed, pending } = await enrichSettled();
     // Back off only when nothing is pending at all — not when work exists but is still settling.
     enrichIdle = pending === 0 ? enrichIdle + 1 : 0;
     if (processed) console.log(`[enrich] updated ${processed} trail(s)`);

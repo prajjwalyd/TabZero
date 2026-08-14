@@ -60,13 +60,13 @@ function toDTO(t: TrailRow, now: number): TrailDTO {
   };
 }
 
-export function listTrails(opts: { includeForming?: boolean; includeArchived?: boolean; limit?: number } = {}): TrailDTO[] {
+export function listTrails(opts: { limit?: number } = {}): TrailDTO[] {
   const now = Date.now();
   const rows = db.prepare('SELECT * FROM trails').all() as unknown as TrailRow[];
   let dtos = rows
-    .filter((t) => (opts.includeForming ? true : t.page_count >= cfg.MIN_TRAIL_PAGES))
+    .filter((t) => t.page_count >= cfg.MIN_TRAIL_PAGES) // sub-threshold trails are still forming
     .map((t) => toDTO(t, now))
-    .filter((d) => (opts.includeArchived ? true : d.status !== 'archived'))
+    .filter((d) => d.status !== 'archived')
     .sort((a, b) => b.liveness - a.liveness || b.lastActive - a.lastActive);
   if (opts.limit) dtos = dtos.slice(0, opts.limit);
   return dtos;

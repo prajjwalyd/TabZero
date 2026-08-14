@@ -55,7 +55,6 @@
     "@clack/prompts": "^1.7.0"
   },
   "devDependencies": {
-    "@phosphor-icons/core": "^2.1.1",
     "@resvg/resvg-js": "^2.6.2",
     "@types/chrome": "latest",
     "@types/node": "^24.0.0",
