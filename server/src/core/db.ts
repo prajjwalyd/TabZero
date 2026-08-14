@@ -40,14 +40,16 @@ CREATE TABLE IF NOT EXISTS pages (
 CREATE INDEX IF NOT EXISTS idx_pages_trail  ON pages(trail_id);
 CREATE INDEX IF NOT EXISTS idx_pages_domain ON pages(domain);
 
+-- NOTE: status and liveness are deliberately NOT stored. Both are derived on read from page_count,
+-- session_count and last_active (trails.ts::statusFor / computeLiveness), so a stored copy would be
+-- stale the moment the clock moved and there'd be no sweeper to fix it. Databases created before this
+-- keep two vestigial columns that nothing reads or writes.
 CREATE TABLE IF NOT EXISTS trails (
   id            TEXT PRIMARY KEY,
   label         TEXT,
   one_liner     TEXT,
-  status        TEXT DEFAULT 'forming',
   created       INTEGER,
   last_active   INTEGER,
-  liveness      REAL DEFAULT 0,
   summary       TEXT,
   summary_dirty INTEGER DEFAULT 1,
   label_dirty   INTEGER DEFAULT 1,

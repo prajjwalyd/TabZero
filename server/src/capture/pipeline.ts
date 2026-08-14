@@ -11,12 +11,7 @@ const activeByWindow = new Map<number, { tabId: number; canonical: string | null
 const tabCanon = new Map<number, string>(); // tabId -> current canonical url
 const tabOpener = new Map<number, number>(); // tabId -> openerTabId
 
-export interface IngestResult {
-  trailId?: string;
-  created?: boolean;
-}
-
-export function ingestEvent(ev: TabEventInput): IngestResult {
+export function ingestEvent(ev: TabEventInput): void {
   const canon = ev.url ? canonicalize(ev.url) : null;
 
   // 1. Append to the immutable raw log (source of truth for exact reopen).
@@ -41,7 +36,7 @@ export function ingestEvent(ev: TabEventInput): IngestResult {
     }
   }
 
-  if (!canon || ev.type === 'close') return {};
+  if (!canon || ev.type === 'close') return;
 
   // 3. Page upsert (dedup by canonical url) + trail assignment. Note whether the tab actually moved
   //    to a different url — a same-url re-report (the several onUpdated ticks one load fires, or an
@@ -54,7 +49,7 @@ export function ingestEvent(ev: TabEventInput): IngestResult {
     win.canonical = canon.canonical;
     win.since = ev.ts;
   }
-  return upsertPage(canon, ev, revisit);
+  upsertPage(canon, ev, revisit);
 }
 
 function creditDwell(windowId: number, now: number): void {
@@ -68,7 +63,7 @@ function creditDwell(windowId: number, now: number): void {
   }
 }
 
-function upsertPage(canon: Canon, ev: TabEventInput, revisit: boolean): IngestResult {
+function upsertPage(canon: Canon, ev: TabEventInput, revisit: boolean): void {
   const existing = db.prepare('SELECT * FROM pages WHERE canonical_url = ?').get(canon.canonical) as PageRow | undefined;
   const title = (ev.title || existing?.title || '').trim();
   const rawDesc = (ev.description || ev.heading || '').trim().slice(0, 320) || null;
@@ -99,7 +94,7 @@ function upsertPage(canon: Canon, ev: TabEventInput, revisit: boolean): IngestRe
     } else if (existing.trail_id) {
       touchTrail(existing.trail_id, ev.ts, bump > 0);
     }
-    return { trailId: existing.trail_id ?? undefined };
+    return;
   }
 
   const tokens = tokenize(title, canon, metaText);
@@ -110,7 +105,6 @@ function upsertPage(canon: Canon, ev: TabEventInput, revisit: boolean): IngestRe
 
   const trailId = assignTrail(canon, tokens, ev);
   db.prepare('UPDATE pages SET trail_id = ? WHERE canonical_url = ?').run(trailId, canon.canonical);
-  return { trailId, created: true };
 }
 
 /** True if this exact description already appears on a different page of the same domain (site template). */
@@ -163,21 +157,18 @@ function assignTrail(canon: Canon, tokens: string[], ev: TabEventInput): string 
 }
 
 function addToTrail(trailId: string, tokens: string[], ts: number): string {
-  const t = db.prepare('SELECT centroid, page_count, last_active, session_count, status FROM trails WHERE id = ?').get(trailId) as
-    { centroid: string; page_count: number; last_active: number; session_count: number; status: string } | undefined;
+  const t = db.prepare('SELECT centroid, page_count, last_active, session_count FROM trails WHERE id = ?').get(trailId) as
+    { centroid: string; page_count: number; last_active: number; session_count: number } | undefined;
   if (!t) return trailId;
   let cen: Vec = {};
   try { cen = JSON.parse(t.centroid || '{}'); } catch { /* ignore */ }
   addInto(cen, tokens);
   const pageCount = t.page_count + 1;
   const sessionCount = ts - t.last_active > cfg.RECENCY_WINDOW_MS ? t.session_count + 1 : t.session_count;
-  const status = pageCount >= cfg.MIN_TRAIL_PAGES && (t.status === 'forming' || t.status === 'dormant' || t.status === 'archived')
-    ? 'live'
-    : t.status;
   db.prepare(
-    `UPDATE trails SET centroid = ?, last_active = ?, page_count = ?, session_count = ?, status = ?,
+    `UPDATE trails SET centroid = ?, last_active = ?, page_count = ?, session_count = ?,
        label_dirty = 1, summary_dirty = 1, engram_dirty = 1 WHERE id = ?`,
-  ).run(JSON.stringify(cen), ts, pageCount, sessionCount, status, trailId);
+  ).run(JSON.stringify(cen), ts, pageCount, sessionCount, trailId);
   return trailId;
 }
 
@@ -186,9 +177,9 @@ function createTrail(canon: Canon, tokens: string[], ts: number): string {
   const cen = bag(tokens);
   const label = provisionalLabel(topTokens(cen, 3), canon.domain);
   db.prepare(
-    `INSERT INTO trails (id, label, one_liner, status, created, last_active, liveness, summary, centroid,
+    `INSERT INTO trails (id, label, one_liner, created, last_active, summary, centroid,
        page_count, session_count, label_dirty, summary_dirty, engram_dirty)
-     VALUES (?, ?, NULL, 'forming', ?, ?, 0, NULL, ?, 1, 1, 1, 1, 1)`,
+     VALUES (?, ?, NULL, ?, ?, NULL, ?, 1, 1, 1, 1, 1)`,
   ).run(id, label, ts, ts, JSON.stringify(cen));
   return id;
 }

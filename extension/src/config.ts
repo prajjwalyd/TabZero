@@ -15,7 +15,7 @@ export const BACKEND = 'http://127.0.0.1:8787';
  */
 let cachedToken: string | null = null;
 
-export async function authToken(): Promise<string> {
+async function authToken(): Promise<string> {
   if (cachedToken) return cachedToken;
   const h = await (await fetch(`${BACKEND}/health`)).json();
   const t = typeof h?.token === 'string' ? h.token : '';

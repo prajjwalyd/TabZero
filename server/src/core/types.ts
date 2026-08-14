@@ -37,10 +37,8 @@ export interface TrailRow {
   id: string;
   label: string;
   one_liner: string | null;
-  status: TrailStatus;
   created: number;
   last_active: number;
-  liveness: number;
   summary: string | null;
   summary_source: string | null; // 'engram' | 'local' | 'heuristic' — local/heuristic are placeholders
   summary_dirty: number;

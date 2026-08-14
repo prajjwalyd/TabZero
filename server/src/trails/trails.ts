@@ -40,7 +40,7 @@ export function getTrail(id: string): TrailRow | undefined {
   return db.prepare('SELECT * FROM trails WHERE id = ?').get(id) as TrailRow | undefined;
 }
 
-export function toDTO(t: TrailRow, now: number): TrailDTO {
+function toDTO(t: TrailRow, now: number): TrailDTO {
   const domains = trailDomains(t.id);
   let tokens: string[] = [];
   try { tokens = Object.keys(JSON.parse(t.centroid || '{}')); } catch { /* ignore */ }
@@ -85,7 +85,7 @@ export function trailPages(id: string): PageDTO[] {
   }));
 }
 
-export function trailUrls(id: string): string[] {
+function trailUrls(id: string): string[] {
   const rows = db.prepare('SELECT url FROM pages WHERE trail_id = ? ORDER BY last_seen ASC').all(id) as { url: string }[];
   return rows.map((r) => r.url);
 }
@@ -381,7 +381,6 @@ export async function syncInterests(userId: string): Promise<number> {
 
 export interface Stat {
   key: string;
-  emoji: string;
   label: string;
   value: string;
   detail?: string;
@@ -397,26 +396,26 @@ export function weekInTabs(): { headline: string; stats: Stat[] } {
   const biggest = db.prepare('SELECT id, label, page_count FROM trails ORDER BY page_count DESC LIMIT 1')
     .get() as { label: string; page_count: number } | undefined;
   if (biggest && biggest.page_count > 0) {
-    stats.push({ key: 'deepest', emoji: '🕳️', label: 'Deepest rabbit hole', value: biggest.label || 'a trail', detail: `${biggest.page_count} pages deep` });
+    stats.push({ key: 'deepest', label: 'Deepest rabbit hole', value: biggest.label || 'a trail', detail: `${biggest.page_count} pages deep` });
   }
 
   const boomerang = db.prepare('SELECT title, domain, visit_count FROM pages ORDER BY visit_count DESC LIMIT 1')
     .get() as { title: string; domain: string; visit_count: number } | undefined;
   if (boomerang && boomerang.visit_count > 1) {
-    stats.push({ key: 'boomerang', emoji: '🪃', label: 'Boomerang page', value: (boomerang.title || boomerang.domain).slice(0, 48), detail: `reopened ${boomerang.visit_count}×` });
+    stats.push({ key: 'boomerang', label: 'Boomerang page', value: (boomerang.title || boomerang.domain).slice(0, 48), detail: `reopened ${boomerang.visit_count}×` });
   }
 
   const dwell = db.prepare('SELECT title, domain, total_dwell_ms FROM pages ORDER BY total_dwell_ms DESC LIMIT 1')
     .get() as { title: string; domain: string; total_dwell_ms: number } | undefined;
   if (dwell && dwell.total_dwell_ms > 15000) {
-    stats.push({ key: 'timesink', emoji: '⏳', label: 'Biggest time sink', value: (dwell.title || dwell.domain).slice(0, 48), detail: `${Math.round(dwell.total_dwell_ms / 60000)} min` });
+    stats.push({ key: 'timesink', label: 'Biggest time sink', value: (dwell.title || dwell.domain).slice(0, 48), detail: `${Math.round(dwell.total_dwell_ms / 60000)} min` });
   }
 
   const abandoned = db.prepare(
     "SELECT label, page_count, last_active FROM trails WHERE page_count >= ? ORDER BY last_active ASC LIMIT 1",
   ).get(cfg.MIN_TRAIL_PAGES) as { label: string; page_count: number; last_active: number } | undefined;
   if (abandoned) {
-    stats.push({ key: 'abandoned', emoji: '👻', label: 'Most abandoned trail', value: abandoned.label || 'a trail', detail: `${abandoned.page_count} tabs, ${relTime(abandoned.last_active, now)}` });
+    stats.push({ key: 'abandoned', label: 'Most abandoned trail', value: abandoned.label || 'a trail', detail: `${abandoned.page_count} tabs, ${relTime(abandoned.last_active, now)}` });
   }
 
   // Scan recent events for late-night activity + tab-hoarding peak.
@@ -438,10 +437,10 @@ export function weekInTabs(): { headline: string; stats: Stat[] } {
     if (liveTabs.size > peak) peak = liveTabs.size;
   }
   if (lateNight > 0) {
-    stats.push({ key: 'latenight', emoji: '🌙', label: 'Late-night incident', value: `${lateNight} tabs`, detail: 'opened between 1–5am' });
+    stats.push({ key: 'latenight', label: 'Late-night incident', value: `${lateNight} tabs`, detail: 'opened between 1–5am' });
   }
   if (peak > 1) {
-    stats.push({ key: 'hoard', emoji: '📚', label: 'Tab-hoarding peak', value: `${peak} tabs`, detail: 'open at once' });
+    stats.push({ key: 'hoard', label: 'Tab-hoarding peak', value: `${peak} tabs`, detail: 'open at once' });
   }
 
   const headline = trailCount > 0
@@ -453,7 +452,7 @@ export function weekInTabs(): { headline: string; stats: Stat[] } {
 
 // ---------- util ----------
 
-export function relTime(ts: number, now: number): string {
+function relTime(ts: number, now: number): string {
   const s = Math.max(0, Math.round((now - ts) / 1000));
   if (s < 60) return 'just now';
   const m = Math.round(s / 60);

@@ -81,7 +81,6 @@ export interface EngramHit {
   interestKey: string | null;
   topic: string | null;
   score: number | null;
-  updatedAt: string | null;
 }
 
 /** Raw semantic search over the user's Engram memories. Returns hits with topic + scope properties. */
@@ -96,7 +95,6 @@ export async function engramSearch(userId: string, query: string): Promise<Engra
     interestKey: m?.properties?.interest_key ?? m?.interest_key ?? null,
     topic: m?.topic ?? null,
     score: typeof m?.score === 'number' ? m.score : null,
-    updatedAt: m?.updated_at ?? m?.updatedAt ?? null,
   }));
 }
 
