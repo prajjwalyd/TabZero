@@ -77,8 +77,13 @@ function upsertPage(canon: Canon, ev: TabEventInput, revisit: boolean): void {
     // Count a (re)visit only when the tab genuinely navigated back to this url — a same-url
     // re-report (tab-title churn on YouTube/SPAs, or the multiple ticks of one page load) must not
     // bump visit_count, or a page that was never reopened reads as "reopened 50×".
-    const bump = ev.type === 'navigate' && revisit ? 1 : 0;
-    db.prepare('UPDATE pages SET last_seen = ?, title = ?, visit_count = visit_count + ? WHERE canonical_url = ?')
+    // Replay guard: a re-delivered batch carries its ORIGINAL timestamps, so a navigate that isn't
+    // strictly newer than the last time we saw this page cannot be a new visit. Without this, one
+    // duplicated batch inflates visit_count once per replay — a single real visit to a Google sign-in
+    // page reached 436 that way, which then surfaced as the "boomerang page" stat. last_seen is
+    // clamped with MAX for the same reason: a replayed old event must not drag recency backwards.
+    const bump = ev.type === 'navigate' && revisit && ev.ts > existing.last_seen ? 1 : 0;
+    db.prepare('UPDATE pages SET last_seen = MAX(last_seen, ?), title = ?, visit_count = visit_count + ? WHERE canonical_url = ?')
       .run(ev.ts, title || existing.title, bump, canon.canonical);
 
     // The first time we learn this page's (non-boilerplate) description — usually the content

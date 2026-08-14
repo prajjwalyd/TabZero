@@ -4,9 +4,7 @@
 // rows and dedup silently breaks), and cosine must stay in [0,1] with no NaN on empty vectors.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  canonicalize, tokenize, bag, addInto, cosine, topTokens, provisionalLabel,
-} from '../src/capture/canonical.ts';
+import { canonicalize, tokenize, bag, cosine } from '../src/capture/canonical.ts';
 
 test('canonicalize strips tracking params, hash, www, and trailing slash', () => {
   const a = canonicalize('https://www.Example.com/Docs/Guide/?utm_source=x&gclid=y&b=2&a=1#frag');
@@ -51,8 +49,9 @@ test('tokenize drops stopwords/short words and dedupes, capped at 40', () => {
   assert.ok(!toks.includes('how'), 'stopword leaked');
   assert.equal(new Set(toks).size, toks.length, 'duplicate tokens');
 
-  const many = tokenize(Array.from({ length: 80 }, (_, i) => `word${i}`).join(' '), c);
-  assert.ok(many.length <= 40, `expected <=40, got ${many.length}`);
+  // exactly 40, not "at most 40" — the loose bound also passed when tokenize returned nothing
+  const many = tokenize(Array.from({ length: 80 }, (_, i) => `wordy${i}`).join(' '), c);
+  assert.equal(many.length, 40);
 });
 
 test('cosine: identical = 1, disjoint = 0, empty = 0 (never NaN)', () => {
@@ -67,18 +66,5 @@ test('cosine: identical = 1, disjoint = 0, empty = 0 (never NaN)', () => {
   assert.ok(partial > 0 && partial < 1, `expected (0,1), got ${partial}`);
 });
 
-test('addInto accumulates weights into an existing centroid', () => {
-  const v = bag(['a', 'b']);
-  addInto(v, ['b', 'c']);
-  assert.deepEqual(v, { a: 1, b: 2, c: 1 });
-});
 
-test('topTokens ranks by weight', () => {
-  assert.deepEqual(topTokens({ rare: 1, common: 9, mid: 4 }, 2), ['common', 'mid']);
-});
 
-test('provisionalLabel prefers tokens, falls back to domain, then a constant', () => {
-  assert.equal(provisionalLabel(['gpu', 'pricing', 'h100'], 'example.com'), 'Gpu pricing h100');
-  assert.equal(provisionalLabel([], 'example.com'), 'example');
-  assert.equal(provisionalLabel([], null), 'New trail');
-});

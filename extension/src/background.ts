@@ -38,8 +38,11 @@ async function flush(): Promise<void> {
       body: JSON.stringify({ events: batch }),
     });
     if (!r.ok) throw new Error(`status ${r.status}`);
+    // Delivered — drop the crash mirror. Leaving it behind let a later restore() re-adopt events
+    // that had already been ingested, duplicating them.
+    try { await chrome.storage.local.remove('tz_queue'); } catch { /* ignore */ }
   } catch {
-    // daemon down — put the batch back and persist so nothing is lost across SW death
+    // daemon down — put the batch back and mirror it so nothing is lost across SW death
     queue = batch.concat(queue);
     try { await chrome.storage.local.set({ tz_queue: queue.slice(-3000) }); } catch { /* ignore */ }
   } finally {
@@ -47,14 +50,24 @@ async function flush(): Promise<void> {
   }
 }
 
+/**
+ * Adopt the crash mirror after a service-worker restart.
+ *
+ * `tz_queue` is a MIRROR of this worker's in-memory queue, not a separate backlog — a failed flush
+ * writes the events to both. So adopting it while `queue` is non-empty concatenates events we already
+ * hold, and every failed-flush/restore cycle then DOUBLES the pending set: one page ended up with a
+ * visit_count of 436 from a single real visit (871 navigate events, one tab, one URL, zero URL
+ * changes). Only adopt when we have nothing in memory, which is exactly the case the mirror exists
+ * for: this worker was restarted and lost the queue.
+ */
 async function restore(): Promise<void> {
   try {
+    if (queue.length) return; // in-memory queue is authoritative; storage is its stale mirror
     const { tz_queue } = await chrome.storage.local.get('tz_queue');
-    if (Array.isArray(tz_queue) && tz_queue.length) {
-      queue = tz_queue.concat(queue);
-      await chrome.storage.local.remove('tz_queue');
-      void flush();
-    }
+    if (!Array.isArray(tz_queue) || !tz_queue.length) return;
+    queue = tz_queue;
+    await chrome.storage.local.remove('tz_queue');
+    void flush();
   } catch { /* ignore */ }
 }
 
