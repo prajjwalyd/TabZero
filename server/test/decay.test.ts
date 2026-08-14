@@ -11,7 +11,8 @@ const tmp = mkdtempSync(join(tmpdir(), 'tabzero-test-'));
 process.env.TABZERO_DATA = tmp;
 process.env.TABZERO_USER_ID = 'test-user';
 
-const { computeLiveness, statusFor } = await import('../src/trails/trails.ts');
+const { computeLiveness, statusFor, listTrails } = await import('../src/trails/trails.ts');
+const { db } = await import('../src/core/db.ts');
 const cfg = await import('../src/core/config.ts');
 
 const DAY = 86400000;
@@ -52,4 +53,25 @@ test('statusFor walks forming -> live -> dormant -> archived', () => {
 
 test('an under-sized trail stays forming no matter how stale', () => {
   assert.equal(statusFor(cfg.MIN_TRAIL_PAGES - 1, NOW - 365 * DAY, NOW), 'forming');
+});
+
+// listTrails is the one place status filtering is applied, and both branches of `includeArchived`
+// have to stay reachable — the option was previously dead and got removed for exactly that reason.
+test('listTrails hides archived and forming trails, and --all reveals archived', () => {
+  const now = Date.now();
+  const ins = db.prepare(
+    `INSERT INTO trails (id, label, created, last_active, centroid, page_count, session_count)
+     VALUES (?, ?, ?, ?, '{}', ?, 1)`,
+  );
+  const stale = now - (cfg.ARCHIVE_AFTER_DAYS + 5) * DAY;
+  ins.run('t_arch', 'Archived one', stale, stale, 5);
+  ins.run('t_live', 'Live one', now, now, 5);
+  ins.run('t_form', 'Still forming', now, now, cfg.MIN_TRAIL_PAGES - 1);
+
+  const ids = (o?: { includeArchived?: boolean }) => listTrails(o).map((t) => t.id);
+
+  assert.deepEqual(ids(), ['t_live'], 'default list should show only the live trail');
+  assert.ok(ids({ includeArchived: true }).includes('t_arch'), '--all should reveal archived');
+  assert.ok(ids({ includeArchived: true }).includes('t_live'), '--all should still show live');
+  assert.ok(!ids({ includeArchived: true }).includes('t_form'), 'forming stays hidden either way');
 });

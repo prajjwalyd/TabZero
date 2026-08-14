@@ -115,7 +115,7 @@ your system prompt) and it can pull your browsing memory on demand.
 | Command | What it does |
 |---|---|
 | `tabzero search [query]` | Natural-language search over your trails (empty query lists all) |
-| `tabzero trails` | Every trail, newest first |
+| `tabzero trails [--all]` | Every trail, newest first; `--all` also includes archived (quiet >30 days) |
 | `tabzero trail <id\|query>` | One trail's recap + its page list |
 | `tabzero resurrect <query>` | Recap + the exact URLs to reopen, from a query or id |
 | `tabzero week` | The vanity stats (rabbit holes, abandoned trails, 3am incidents…) |

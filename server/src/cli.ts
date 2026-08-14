@@ -166,8 +166,8 @@ async function cmdSearch(query: string, json: boolean): Promise<void> {
       : 'No trails matched.');
 }
 
-async function cmdTrails(json: boolean): Promise<void> {
-  const { trails } = await apiCall('/trails');
+async function cmdTrails(json: boolean, includeArchived: boolean): Promise<void> {
+  const { trails } = await apiCall(`/trails${includeArchived ? '?archived=1' : ''}`);
   emit(json, trails, () => (trails.length ? trails.map(trailLine).join('\n') : 'No trails yet.'));
 }
 
@@ -331,7 +331,7 @@ function usage(): void {
     '  tabzero uninstall          Remove everything + (optionally) all data\n\n' +
     'Query your browsing memory (for you, or any agent with a shell):\n' +
     '  tabzero search [query]     Search trails; empty query lists all, newest first\n' +
-    '  tabzero trails             List every trail\n' +
+    '  tabzero trails [--all]     List trails; --all includes archived (quiet >30d)\n' +
     '  tabzero trail <id|query>   One trail: recap + its pages\n' +
     '  tabzero resurrect <query>  Recap + the exact URLs to reopen\n' +
     '  tabzero week               Stats: deepest rabbit hole, time sinks, late nights\n' +
@@ -343,7 +343,9 @@ function usage(): void {
 // --- dispatch ---
 const argv = process.argv.slice(2);
 const JSON_OUT = argv.includes('--json');
-const [cmd, ...rest] = argv.filter((a) => a !== '--json');
+const SHOW_ALL = argv.includes('--all');
+const FLAGS = new Set(['--json', '--all']);
+const [cmd, ...rest] = argv.filter((a) => !FLAGS.has(a));
 const arg = rest.join(' '); // let queries go unquoted: `tabzero search gpu pricing`
 
 switch (cmd) {
@@ -355,7 +357,7 @@ switch (cmd) {
   case 'uninstall': await cmdUninstall(); break;
 
   case 'search': await cmdSearch(arg, JSON_OUT); break;
-  case 'trails': await cmdTrails(JSON_OUT); break;
+  case 'trails': await cmdTrails(JSON_OUT, SHOW_ALL); break;
   case 'trail':
     if (!arg) fail('Usage: tabzero trail <id|query>');
     await cmdTrail(arg, JSON_OUT);

@@ -71,7 +71,8 @@ export function startHttp(): http.Server {
 
       if (req.method === 'GET' && path === '/trails') {
         const limit = Number(url.searchParams.get('limit') || 0) || undefined;
-        return send(res, 200, { trails: listTrails({ limit }) });
+        const includeArchived = url.searchParams.get('archived') === '1';
+        return send(res, 200, { trails: listTrails({ limit, includeArchived }) });
       }
 
       const m = path.match(/^\/trails\/([^/]+)$/);
