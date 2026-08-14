@@ -1,6 +1,6 @@
 // Thin capture layer. MV3 service workers are ephemeral, so we do the minimum here:
 // observe tab events, buffer them, and forward batches to the local daemon (which owns all state).
-import { BACKEND, TOKEN } from './config.js';
+import { BACKEND, authHeaders } from './config.js';
 
 interface Ev {
   ts: number;
@@ -34,7 +34,7 @@ async function flush(): Promise<void> {
   try {
     const r = await fetch(`${BACKEND}/events`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-tabzero-token': TOKEN },
+      headers: await authHeaders(true),
       body: JSON.stringify({ events: batch }),
     });
     if (!r.ok) throw new Error(`status ${r.status}`);
@@ -84,7 +84,7 @@ chrome.tabs.onRemoved.addListener((tabId, info) => {
 async function doNuke(): Promise<{ closed: number; trails: number }> {
   let trails = 0;
   try {
-    const h = await (await fetch(`${BACKEND}/health`, { headers: { 'x-tabzero-token': TOKEN } })).json();
+    const h = await (await fetch(`${BACKEND}/health`)).json(); // /health needs no auth
     trails = h?.trails ?? 0;
   } catch { /* daemon down — still close the tabs */ }
 
@@ -100,7 +100,7 @@ async function doNuke(): Promise<{ closed: number; trails: number }> {
     .filter((u): u is string => !!u && /^https?:/.test(u) && u !== zeroUrl);
   void fetch(`${BACKEND}/zero`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-tabzero-token': TOKEN },
+    headers: await authHeaders(true),
     body: JSON.stringify({ openUrls }),
   }).catch(() => {});
   const url = chrome.runtime.getURL(`zero.html?closed=${closed}&trails=${trails}`);

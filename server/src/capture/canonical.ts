@@ -37,9 +37,13 @@ export function canonicalize(raw: string | null | undefined): Canon | null {
     if (lk.startsWith('utm_') || TRACKING_PARAMS.has(lk)) u.searchParams.delete(k);
   }
   u.searchParams.sort();
+  // Strip the trailing slash from the PATH, not just the end of the serialized URL: with a query
+  // present the slash isn't last (`/p/?a=1`), so a string-level strip misses it and `/p/?a=1` would
+  // dedupe apart from `/p?a=1` — splitting one page into two rows and halving its visit count.
+  if (u.pathname.length > 1 && u.pathname.endsWith('/')) u.pathname = u.pathname.slice(0, -1);
   let s = u.toString();
   if (s.endsWith('?')) s = s.slice(0, -1);
-  if (s.endsWith('/')) s = s.slice(0, -1);
+  if (s.endsWith('/')) s = s.slice(0, -1); // bare origin: https://example.com/ -> https://example.com
   return { canonical: s, domain: u.hostname };
 }
 

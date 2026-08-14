@@ -136,3 +136,17 @@ export function getUserId(): string {
   setMeta('user_id', id);
   return id;
 }
+
+/**
+ * The next trail id — a short, agent-friendly `t_<n>` (e.g. `t_42`) instead of a random hash, so an
+ * agent can pass it back to `get_trail`/`resurrect_trail` without fumbling an 8-char hex. The counter
+ * is monotonic and never recycles a number within a user scope (a deleted trail's id is not reused),
+ * which keeps it a safe stable key for Engram memories scoped by `trail_id`. It only restarts on a
+ * full DB wipe (`pnpm reset`), which also mints a fresh user_id / clean Engram scope. Single-writer
+ * (only the daemon creates trails), so the read-increment needs no locking.
+ */
+export function nextTrailId(): string {
+  const n = Number(getMeta('trail_seq') || '0') + 1;
+  setMeta('trail_seq', String(n));
+  return `t_${n}`;
+}

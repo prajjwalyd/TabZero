@@ -158,12 +158,12 @@ Env vars (all optional). In dev they load from `.env` at the repo root; installe
 | `TABZERO_USER_ID` | _(generated)_ | Pin the user / Engram scope; bump it for a clean slate |
 | `TABZERO_TRAIL_TOPIC` | `TrailSummary` | Match a differently-named recap topic |
 | `TABZERO_INTEREST_TOPIC` | `ResearchInterest` | Match a differently-named interest topic |
-| `TABZERO_PORT` | `8787` | Daemon port (also update `extension/src/config.ts`) |
-| `TABZERO_TOKEN` | `tabzero-dev` | Shared secret between extension and daemon |
+| `TABZERO_PORT` | `8787` | Daemon port — also set `BACKEND` in `extension/src/config.ts` and rebuild |
+| `TABZERO_TOKEN` | _(generated)_ | Pin the extension↔daemon secret; by default a random one is minted per install into `<data dir>/token` |
 | `TABZERO_ENGRAM_TIMEOUT_MS` | `15000` | Hard cap on any Engram call so a slow endpoint can't hang the daemon |
 | `TABZERO_DEBUG` | — | Set to `1` for verbose Engram retrieval logs |
 
-Data lives in `./.tabzero/tabzero.db` (SQLite, WAL) in dev, or `~/.tabzero/tabzero.db` when installed. Because the raw log is the source of truth, your Engram project is fully rebuildable by replaying it.
+Data lives in `./.tabzero/tabzero.db` (SQLite, WAL) in dev, or `~/.tabzero/tabzero.db` when installed. The daemon binds `127.0.0.1` only, sends no CORS headers (so no web page can read your trails), and authenticates the extension with a per-install random token it hands out on `/health`. Because the raw log is the source of truth, your Engram project is fully rebuildable by replaying it.
 
 ---
 
@@ -172,17 +172,22 @@ Data lives in `./.tabzero/tabzero.db` (SQLite, WAL) in dev, or `~/.tabzero/tabze
 ```
 server/         Node daemon + trail engine + Engram client + MCP server (TypeScript)
   src/
-    pipeline.ts     ingestion: canonicalize -> dedup -> tokenize -> cluster into trails
-    trails.ts       trail read models, decay/liveness, LLM labels + recap summaries
-    canonical.ts    URL canonicalization + embedding-free lexical vectors
-    categories.ts   growable, LLM-driven category vocabulary
-    engram.ts       defensive REST client for Weaviate Engram
-    sync.ts         enrichment passes + Engram flush (settle-gated, budget-safe)
-    scheduler.ts    adaptive, backing-off enrichment scheduler
-    checkpoint.ts   the "tab zero" moment: snapshot -> finalize -> flush
-    http.ts         localhost API the extension talks to
+    index.ts        daemon entrypoint (HTTP + scheduler)
     mcp.ts          stdio MCP server (5 tools)
     cli.ts          the `tabzero` command (setup, install, key, uninstall)
+    core/           config.ts, db.ts (schema + handle), types.ts, llm.ts (backend adapter)
+    capture/        canonical.ts   URL canonicalization + embedding-free lexical vectors
+                    pipeline.ts    ingestion: canonicalize -> dedup -> tokenize -> cluster
+    trails/         trails.ts      read models, decay/liveness, LLM labels + recaps, search
+                    categories.ts  growable, LLM-driven category vocabulary
+                    checkpoint.ts  the "tab zero" moment: snapshot -> finalize -> flush
+    engram/         client.ts      defensive REST client for Weaviate Engram
+                    sync.ts        enrichment passes + Engram flush (settle-gated)
+    daemon/         http.ts        localhost API the extension talks to
+                    scheduler.ts   adaptive, backing-off enrichment scheduler
+    setup/          mcp-install.ts registers the MCP across every agent harness
+    scripts/        seed.ts (demo data) · reset.ts (clean slate)
+  test/           node:test units for canonicalization + decay math (`pnpm test`)
 extension/      MV3 extension: capture (background) + popup UI (TypeScript, esbuild)
 docs/           engram.md (Engram setup) · images/ (screenshots)
 ```

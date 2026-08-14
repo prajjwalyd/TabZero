@@ -4,14 +4,15 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { getUserId } from './db.js';
-import { searchTrails, getTrailDetail, getTrail, resurrectUrls, summarizeTrail, weekInTabs, getInterests } from './trails.js';
+import { getUserId } from './core/db.js';
+import { VERSION } from './core/version.js';
+import { searchTrails, getTrailDetail, getTrail, resurrectUrls, summarizeTrail, weekInTabs, getInterests } from './trails/trails.js';
 
 function text(obj: unknown) {
   return { content: [{ type: 'text' as const, text: typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2) }] };
 }
 
-const server = new McpServer({ name: 'tabzero', version: '0.1.0' });
+const server = new McpServer({ name: 'tabzero', version: VERSION });
 
 server.tool(
   'search_trails',
@@ -40,7 +41,7 @@ server.tool(
 server.tool(
   'get_trail',
   'Get full detail for one research trail: its recap summary and the list of pages/URLs.',
-  { trail_id: z.string().describe('a trail id like "t_1a2b3c4d"') },
+  { trail_id: z.string().describe('a trail id like "t_42" (as returned by search_trails)') },
   async ({ trail_id }) => {
     const d = await getTrailDetail(trail_id, { summarize: true });
     return d ? text(d) : text({ error: 'trail not found' });

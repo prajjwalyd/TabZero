@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 
 /** Walk up from a starting dir to find the repo root (marked by tsconfig.base.json, committed & root-only). Null if not in a repo. */
 function findRepoRoot(start: string): string | null {
@@ -54,7 +55,27 @@ export const USER_ID = (process.env.TABZERO_USER_ID || '').trim();
 
 export const HOST = '127.0.0.1';
 export const PORT = Number(process.env.TABZERO_PORT || 8787);
-export const TOKEN = process.env.TABZERO_TOKEN || 'tabzero-dev';
+
+/**
+ * Shared secret between the daemon and the extension. Minted randomly on first run and persisted
+ * beside the DB (0600) rather than shipped as a publicly-known constant — otherwise every install
+ * would share one token and anything on the machine could read your whole browsing history by
+ * guessing it. TABZERO_TOKEN pins it explicitly. The extension learns it from /health, which is
+ * safe to expose only because the daemon sends no CORS headers (see daemon/http.ts).
+ */
+function loadToken(): string {
+  const pinned = (process.env.TABZERO_TOKEN || '').trim();
+  if (pinned) return pinned;
+  const p = join(DATA_DIR, 'token');
+  if (existsSync(p)) {
+    const t = readFileSync(p, 'utf8').trim();
+    if (t) return t;
+  }
+  const t = randomUUID();
+  writeFileSync(p, t + '\n', { mode: 0o600 });
+  return t;
+}
+export const TOKEN = loadToken();
 
 // Engram (Weaviate) — reconciled memory layer
 export const ENGRAM_API_KEY = process.env.ENGRAM_API_KEY || '';

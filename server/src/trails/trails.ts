@@ -1,10 +1,10 @@
-import { db, getUserId } from './db.js';
-import { topTokens, provisionalLabel, cosine, type Vec } from './canonical.js';
-import { llmText } from './llm.js';
-import { engramSearch, engramTrailMemory, engramInterests, engramAssertInterest } from './engram.js';
+import { db, getUserId } from '../core/db.js';
+import { topTokens, provisionalLabel, cosine, type Vec } from '../capture/canonical.js';
+import { llmText } from '../core/llm.js';
+import { engramSearch, engramTrailMemory, engramInterests, engramAssertInterest } from '../engram/client.js';
 import { categorize, resolveCategory, knownCategory, categoryPromptList } from './categories.js';
-import * as cfg from './config.js';
-import type { TrailRow, PageRow, TrailDTO, PageDTO, TrailDetail, TrailStatus } from './types.js';
+import * as cfg from '../core/config.js';
+import type { TrailRow, PageRow, TrailDTO, PageDTO, TrailDetail, TrailStatus } from '../core/types.js';
 
 const DAY = 86400000;
 
@@ -420,19 +420,22 @@ export function weekInTabs(): { headline: string; stats: Stat[] } {
   }
 
   // Scan recent events for late-night activity + tab-hoarding peak.
-  const evs = db.prepare('SELECT ts, type FROM events ORDER BY id DESC LIMIT 5000').all() as { ts: number; type: string }[];
+  const evs = db.prepare('SELECT ts, type, tab_id FROM events ORDER BY id DESC LIMIT 5000')
+    .all() as { ts: number; type: string; tab_id: number | null }[];
   let lateNight = 0;
-  let open = 0;
-  let peak = 0;
   for (const e of evs) {
     const h = new Date(e.ts).getHours();
     if (h >= 1 && h < 5) lateNight++;
   }
-  const asc = [...evs].reverse();
-  for (const e of asc) {
-    if (e.type === 'open') open++;
-    else if (e.type === 'close') open = Math.max(0, open - 1);
-    if (open > peak) peak = open;
+  // Peak simultaneous tabs, by replaying open/close over a SET of tab ids (not a counter): a
+  // re-reported open can't double-count and a close for an unknown tab can't underflow.
+  const liveTabs = new Set<number>();
+  let peak = 0;
+  for (const e of [...evs].reverse()) {
+    if (e.tab_id == null) continue;
+    if (e.type === 'open') liveTabs.add(e.tab_id);
+    else if (e.type === 'close') liveTabs.delete(e.tab_id);
+    if (liveTabs.size > peak) peak = liveTabs.size;
   }
   if (lateNight > 0) {
     stats.push({ key: 'latenight', emoji: '🌙', label: 'Late-night incident', value: `${lateNight} tabs`, detail: 'opened between 1–5am' });

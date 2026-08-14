@@ -3,9 +3,9 @@
 // exponential backoff while the browser is quiet, and an immediate snap back to base the moment new
 // activity arrives (noteActivity, called on every ingested batch). The per-trail settle gate lives
 // in sync.ts — this layer only decides *how often to look*, never *what is eligible*.
-import * as cfg from './config.js';
-import { ENGRAM_ENABLED } from './config.js';
-import { enrichSettled, flushEngram } from './sync.js';
+import * as cfg from '../core/config.js';
+import { ENGRAM_ENABLED } from '../core/config.js';
+import { enrichSettled, flushEngram } from '../engram/sync.js';
 
 let enrichTimer: ReturnType<typeof setTimeout> | null = null;
 let engramTimer: ReturnType<typeof setTimeout> | null = null;

@@ -1,22 +1,22 @@
 import http from 'node:http';
-import { HOST, PORT, TOKEN, ENGRAM_ENABLED } from './config.js';
-import { db, getUserId } from './db.js';
-import { ingestEvent } from './pipeline.js';
+import { HOST, PORT, TOKEN, ENGRAM_ENABLED } from '../core/config.js';
+import { db, getUserId } from '../core/db.js';
+import { ingestEvent } from '../capture/pipeline.js';
 import {
   listTrails, getTrailDetail, getTrail, resurrectUrls, searchTrails, weekInTabs, summarizeTrail, getInterests,
-} from './trails.js';
-import { LLM_BACKEND } from './llm.js';
-import { zeroCheckpoint } from './checkpoint.js';
+} from '../trails/trails.js';
+import { LLM_BACKEND } from '../core/llm.js';
+import { zeroCheckpoint } from '../trails/checkpoint.js';
 import { noteActivity } from './scheduler.js';
-import type { TabEventInput } from './types.js';
+import type { TabEventInput } from '../core/types.js';
 
+// Deliberately NO `Access-Control-Allow-*` headers. This daemon serves your entire browsing history
+// on localhost, and a wildcard ACAO let any page you visited read it cross-origin. The extension
+// doesn't need CORS at all — MV3 `host_permissions` exempt its fetches from it — so withholding the
+// headers blocks web pages while leaving the extension unaffected. It's also what makes returning
+// the auth token from /health safe: a page can send that request but can't read the response.
 function send(res: http.ServerResponse, code: number, body: unknown): void {
-  res.writeHead(code, {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'content-type, x-tabzero-token',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  });
+  res.writeHead(code, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
 }
 
@@ -49,6 +49,7 @@ export function startHttp(): http.Server {
       if (req.method === 'GET' && path === '/health') {
         return send(res, 200, {
           ok: true,
+          token: TOKEN, // how the extension bootstraps auth; unreadable to web pages (no CORS headers)
           userId: getUserId(),
           engram: ENGRAM_ENABLED,
           llm: LLM_BACKEND,

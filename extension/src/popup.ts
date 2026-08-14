@@ -1,11 +1,10 @@
-import { BACKEND, TOKEN } from './config.js';
+import { BACKEND, authHeaders } from './config.js';
 import { iconSvg, brandMark, STAT_ICON } from './icons.js';
 
-const HEADERS = { 'content-type': 'application/json', 'x-tabzero-token': TOKEN };
 const api = {
-  get: (p: string) => fetch(BACKEND + p, { headers: HEADERS }).then((r) => r.json()),
-  post: (p: string, body?: unknown) =>
-    fetch(BACKEND + p, { method: 'POST', headers: HEADERS, body: body ? JSON.stringify(body) : undefined }).then((r) => r.json()),
+  get: async (p: string) => fetch(BACKEND + p, { headers: await authHeaders() }).then((r) => r.json()),
+  post: async (p: string, body?: unknown) =>
+    fetch(BACKEND + p, { method: 'POST', headers: await authHeaders(true), body: body ? JSON.stringify(body) : undefined }).then((r) => r.json()),
 };
 
 interface Trail {
@@ -15,7 +14,7 @@ interface Trail {
 interface Hit { trail: Trail; why: 'semantic' | 'keyword'; snippet?: string }
 interface Stat { key: string; label: string; value: string; detail?: string }
 
-// Display order + labels for category grouping (mirrors server/src/categories.ts).
+// Display order + labels for category grouping (mirrors server/src/trails/categories.ts).
 const CAT_ORDER = ['dev', 'learning', 'news', 'social', 'media', 'shopping', 'travel', 'finance', 'work', 'projects', 'general'];
 const CAT_LABEL: Record<string, string> = {
   dev: 'Code & Docs', learning: 'Learning & Research', news: 'News & Reading', social: 'Social',
@@ -45,7 +44,23 @@ function debounce<T extends (...a: any[]) => void>(fn: T, ms: number): T {
 let view: 'trails' | 'week' = 'trails';
 let groupBy = false;
 
+/**
+ * Flag whether this platform uses classic (always-visible, gutter-reserving) scrollbars, so popup.css
+ * only takes over the styling where that's already the native behaviour. Measuring is the only honest
+ * test — an overlay scrollbar is painted over the content and so costs no layout width, while a
+ * classic one narrows the client box. `overflow-y: scroll` forces the bar to exist for the probe.
+ */
+function markScrollbarMode(): void {
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:absolute;visibility:hidden;width:100px;height:100px;overflow-y:scroll';
+  document.body.appendChild(probe);
+  const classic = probe.offsetWidth > probe.clientWidth;
+  probe.remove();
+  document.documentElement.classList.toggle('classic-scrollbars', classic);
+}
+
 async function init(): Promise<void> {
+  markScrollbarMode();
   $('brandMark').innerHTML = brandMark(22);
   $('searchIco').innerHTML = iconSvg('search', 15);
   $('refreshBtn').innerHTML = iconSvg('refresh', 15);

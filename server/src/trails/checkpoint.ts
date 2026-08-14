@@ -3,14 +3,14 @@
 // On zero we (1) snapshot the exact tabs open together as a resurrectable working set, (2) finalize
 // labels + recaps for those trails now, while context is freshest and the user has declared them
 // done, and (3) force-push them to Engram. Explicit intent = the right moment to spend the budget.
-import { db } from './db.js';
-import { canonicalize } from './canonical.js';
+import { db } from '../core/db.js';
+import { canonicalize } from '../capture/canonical.js';
 import { getTrail, listTrails, labelTrail, summarizeTrail, syncInterests } from './trails.js';
 import { consolidateCategories } from './categories.js';
-import { flushEngram } from './sync.js';
-import { getUserId } from './db.js';
-import * as cfg from './config.js';
-import type { TrailDTO } from './types.js';
+import { flushEngram } from '../engram/sync.js';
+import { getUserId } from '../core/db.js';
+import * as cfg from '../core/config.js';
+import type { TrailDTO } from '../core/types.js';
 
 export interface ZeroResult {
   ok: true;

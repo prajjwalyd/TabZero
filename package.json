@@ -1,9 +1,17 @@
 {
   "name": "tabzero",
-  "private": true,
   "version": "0.1.0",
   "type": "module",
   "description": "Close every tab guilt-free. Your browser remembers why and any agent can resurrect it. Built on Weaviate Engram.",
+  "license": "MIT",
+  "author": "Prajjwal Yadav (https://github.com/prajjwalyd)",
+  "repository": { "type": "git", "url": "git+https://github.com/prajjwalyd/TabZero.git" },
+  "homepage": "https://github.com/prajjwalyd/TabZero#readme",
+  "bugs": { "url": "https://github.com/prajjwalyd/TabZero/issues" },
+  "keywords": [
+    "mcp", "model-context-protocol", "weaviate", "engram", "agent-memory",
+    "chrome-extension", "tabs", "browser-history", "productivity", "ai"
+  ],
   "packageManager": "pnpm@10.34.1",
   "bin": { "tabzero": "bin/tabzero.js" },
   "files": ["bin", "server/dist", "extension/dist", "README.md"],
@@ -12,13 +20,14 @@
     "backend": "NODE_NO_WARNINGS=1 tsx server/src/index.ts",
     "backend:dev": "NODE_NO_WARNINGS=1 tsx watch server/src/index.ts",
     "mcp": "NODE_NO_WARNINGS=1 tsx server/src/mcp.ts",
-    "seed": "NODE_NO_WARNINGS=1 tsx server/src/seed.ts",
-    "reset": "NODE_NO_WARNINGS=1 tsx server/src/reset.ts",
+    "seed": "NODE_NO_WARNINGS=1 tsx server/src/scripts/seed.ts",
+    "reset": "NODE_NO_WARNINGS=1 tsx server/src/scripts/reset.ts",
     "build:server": "tsc -p server/tsconfig.json",
     "build:ext": "cd extension && node build.mjs",
     "watch:ext": "cd extension && node build.mjs --watch",
     "build": "pnpm run build:server && pnpm run build:ext",
     "typecheck": "tsc -p server/tsconfig.json --noEmit && tsc -p extension/tsconfig.json --noEmit",
+    "test": "NODE_NO_WARNINGS=1 tsx --test server/test/*.test.ts",
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {

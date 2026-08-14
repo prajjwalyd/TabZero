@@ -84,9 +84,15 @@ body {
 
 /* main scroll */
 main { overflow-y: auto; padding: 8px 14px 16px; flex: 1; }
-main::-webkit-scrollbar { width: 8px; }
-main::-webkit-scrollbar-thumb { background: #DDD9CE; border-radius: 8px; }
-main::-webkit-scrollbar-thumb:hover { background: #CFCBBE; }
+/* Chrome can't restyle a scrollbar without also changing its *kind*: a single ::-webkit-scrollbar
+   rule swaps the platform's overlay scrollbar (macOS — floats over the content and fades out when
+   idle) for the classic kind, which is always visible and reserves a permanent 8px gutter. So the
+   custom bar is scoped to platforms whose scrollbars are classic to begin with — Windows/Linux, and
+   macOS set to "always show scroll bars". Elsewhere the native fading one is left alone.
+   The class is set by popup.ts::markScrollbarMode. */
+.classic-scrollbars main::-webkit-scrollbar { width: 8px; }
+.classic-scrollbars main::-webkit-scrollbar-thumb { background: #DDD9CE; border-radius: 8px; }
+.classic-scrollbars main::-webkit-scrollbar-thumb:hover { background: #CFCBBE; }
 
 /* list bar (count + group toggle) */
 .list-bar { display: flex; align-items: center; justify-content: space-between; padding: 6px 18px 8px; }

@@ -1,8 +1,8 @@
-import { db, getUserId } from './db.js';
-import { getTrail, trailPages, labelTrail, summarizeTrail } from './trails.js';
-import { engramUpsertTrail } from './engram.js';
-import * as cfg from './config.js';
-import type { PageDTO } from './types.js';
+import { db, getUserId } from '../core/db.js';
+import { getTrail, trailPages, labelTrail, summarizeTrail } from '../trails/trails.js';
+import { engramUpsertTrail } from './client.js';
+import * as cfg from '../core/config.js';
+import type { PageDTO } from '../core/types.js';
 
 // The RAW signal we hand Engram: the label plus one atomic fact per page. NOT a finished summary —
 // Engram's own pipeline extracts and reconciles the memory from these, so it evolves as the trail

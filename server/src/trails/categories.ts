@@ -4,8 +4,8 @@
 //   2. a *growable* vocabulary in the `categories` table, seeded from the fixed taxonomy below. The
 //      LLM (in labelTrail) reuses an existing key where it can and mints a new one only when a trail
 //      fits nothing — resolveCategory() enforces that reuse bias with a lexical novelty gate + ceiling.
-import { db } from './db.js';
-import * as cfg from './config.js';
+import { db } from '../core/db.js';
+import * as cfg from '../core/config.js';
 
 interface CategoryDef {
   key: string;

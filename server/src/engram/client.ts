@@ -8,7 +8,7 @@
 // only the raw log. (Previously we pushed a pre-baked local summary, which reduced Engram to a
 // vector-search box — reconciliation had nothing to reconcile.)
 
-import { ENGRAM_API_KEY, ENGRAM_BASE, ENGRAM_ENABLED, ENGRAM_TIMEOUT_MS, TRAIL_TOPIC, INTEREST_TOPIC, DEBUG } from './config.js';
+import { ENGRAM_API_KEY, ENGRAM_BASE, ENGRAM_ENABLED, ENGRAM_TIMEOUT_MS, TRAIL_TOPIC, INTEREST_TOPIC, DEBUG } from '../core/config.js';
 
 interface PostResult {
   ok: boolean;

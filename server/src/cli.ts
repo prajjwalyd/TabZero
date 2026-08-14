@@ -10,8 +10,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import {
   intro, outro, password, confirm, multiselect, spinner, note, log, isCancel, cancel,
 } from '@clack/prompts';
-import { ENV_PATH, DATA_DIR, PORT } from './config.js';
-import { allTargets, type McpCommand } from './mcp-install.js';
+import { ENV_PATH, DATA_DIR, PORT } from './core/config.js';
+import { allTargets, type McpCommand } from './setup/mcp-install.js';
 
 const REPO = 'https://github.com/prajjwalyd/TabZero';
 const DOCS_ENGRAM = `${REPO}/blob/main/docs/engram.md`;

@@ -1,11 +1,10 @@
-import { randomUUID } from 'node:crypto';
-import { db } from './db.js';
+import { db, nextTrailId } from '../core/db.js';
 import {
   canonicalize, tokenize, bag, addInto, cosine, topTokens, provisionalLabel,
   type Canon, type Vec,
 } from './canonical.js';
-import type { TabEventInput, PageRow } from './types.js';
-import * as cfg from './config.js';
+import type { TabEventInput, PageRow } from '../core/types.js';
+import * as cfg from '../core/config.js';
 
 // In-memory session state for the running daemon (rebuilt lazily; not the source of truth).
 const activeByWindow = new Map<number, { tabId: number; canonical: string | null; since: number }>();
@@ -44,7 +43,10 @@ export function ingestEvent(ev: TabEventInput): IngestResult {
 
   if (!canon || ev.type === 'close') return {};
 
-  // 3. Page upsert (dedup by canonical url) + trail assignment.
+  // 3. Page upsert (dedup by canonical url) + trail assignment. Note whether the tab actually moved
+  //    to a different url — a same-url re-report (the several onUpdated ticks one load fires, or an
+  //    SPA/YouTube mutating its tab title) is NOT a revisit and must not inflate visit_count.
+  const revisit = tabCanon.get(ev.tabId) !== canon.canonical;
   tabCanon.set(ev.tabId, canon.canonical);
   const win = activeByWindow.get(ev.windowId ?? -1);
   if (win && win.tabId === ev.tabId) {
@@ -52,7 +54,7 @@ export function ingestEvent(ev: TabEventInput): IngestResult {
     win.canonical = canon.canonical;
     win.since = ev.ts;
   }
-  return upsertPage(canon, ev);
+  return upsertPage(canon, ev, revisit);
 }
 
 function creditDwell(windowId: number, now: number): void {
@@ -66,7 +68,7 @@ function creditDwell(windowId: number, now: number): void {
   }
 }
 
-function upsertPage(canon: Canon, ev: TabEventInput): IngestResult {
+function upsertPage(canon: Canon, ev: TabEventInput, revisit: boolean): IngestResult {
   const existing = db.prepare('SELECT * FROM pages WHERE canonical_url = ?').get(canon.canonical) as PageRow | undefined;
   const title = (ev.title || existing?.title || '').trim();
   const rawDesc = (ev.description || ev.heading || '').trim().slice(0, 320) || null;
@@ -77,7 +79,10 @@ function upsertPage(canon: Canon, ev: TabEventInput): IngestResult {
   const metaText = desc ? [ev.heading, ev.description].filter(Boolean).join(' ').trim() : '';
 
   if (existing) {
-    const bump = ev.type === 'navigate' || ev.type === 'open' ? 1 : 0;
+    // Count a (re)visit only when the tab genuinely navigated back to this url — a same-url
+    // re-report (tab-title churn on YouTube/SPAs, or the multiple ticks of one page load) must not
+    // bump visit_count, or a page that was never reopened reads as "reopened 50×".
+    const bump = ev.type === 'navigate' && revisit ? 1 : 0;
     db.prepare('UPDATE pages SET last_seen = ?, title = ?, visit_count = visit_count + ? WHERE canonical_url = ?')
       .run(ev.ts, title || existing.title, bump, canon.canonical);
 
@@ -177,7 +182,7 @@ function addToTrail(trailId: string, tokens: string[], ts: number): string {
 }
 
 function createTrail(canon: Canon, tokens: string[], ts: number): string {
-  const id = 't_' + randomUUID().slice(0, 8);
+  const id = nextTrailId();
   const cen = bag(tokens);
   const label = provisionalLabel(topTokens(cen, 3), canon.domain);
   db.prepare(

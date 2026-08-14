@@ -8,9 +8,9 @@
 //   pnpm seed --reset --enrich   # also run the LLM label/summary pass inline
 //
 // Run with the daemon STOPPED so there's no write contention on the SQLite file.
-import { db, getUserId } from './db.js';
-import { ingestEvent } from './pipeline.js';
-import { labelTrail, summarizeTrail } from './trails.js';
+import { db, getUserId } from '../core/db.js';
+import { ingestEvent } from '../capture/pipeline.js';
+import { labelTrail, summarizeTrail } from '../trails/trails.js';
 
 const RESET = process.argv.includes('--reset');
 const ENRICH = process.argv.includes('--enrich');
@@ -101,7 +101,9 @@ function emitPage(tab: number, win: number, ts: number, p: SeedPage): void {
 
 for (const tr of TRAILS) {
   const base = Date.now() - tr.daysAgo * DAY;
+  const tabs: number[] = [];
   const root = tabSeq++;
+  tabs.push(root);
   // First page opens the "hub" tab.
   ingestEvent({ ts: base, type: 'open', tabId: root, windowId: tr.win });
   emitPage(root, tr.win, base + 1000, tr.pages[0]);
@@ -110,9 +112,14 @@ for (const tr of TRAILS) {
   for (let i = 1; i < tr.pages.length; i++) {
     t += 3 * 60000; // three minutes of dwell between opens
     const child = tabSeq++;
+    tabs.push(child);
     ingestEvent({ ts: t, type: 'open', tabId: child, openerTabId: root, windowId: tr.win });
     emitPage(child, tr.win, t + 1000, tr.pages[i]);
   }
+  // Close the trail's tabs a little later. A real session opens a burst then closes it, so the event
+  // log stays balanced and "tab-hoarding peak" reflects real concurrency, not cumulative opens.
+  t += 3 * 60000;
+  for (const id of tabs) ingestEvent({ ts: t, type: 'close', tabId: id, windowId: tr.win });
 }
 
 const trails = db.prepare('SELECT COUNT(*) c FROM trails WHERE page_count >= 2').get() as { c: number };
