@@ -18,7 +18,7 @@ Tab Zero watches your tab stream, reconciles it into semantic **research trails*
 
 - **Reach Tab Zero** — nuke every open tab in one click. Nothing is lost; every trail stays reconstructable.
 - **Resurrect** — reopen the exact tab constellation of any past trail, with a recap of _where you left off and what you concluded_.
-- **Query it from your agents** — an MCP server exposes your browsing memory to Claude Code, Codex, opencode, and any MCP-aware harness.
+- **Query it from your agents** — a `tabzero` CLI exposes your browsing memory to Claude Code, Codex, opencode, or any agent with a shell. Nothing to install, nothing to restart.
 - **Your week in tabs** — deepest rabbit hole, most-abandoned trail, 3am incident… screenshot bait.
 
 The exact-reopen source of truth is a local SQLite log; the reconciled, evolving memory lives in **Weaviate Engram**.
@@ -35,7 +35,7 @@ The exact-reopen source of truth is a local SQLite log; the reconciled, evolving
 Chrome extension (MV3)  ──localhost HTTP──▶  Node daemon  ──▶  SQLite (raw log + trails)
   capture + popup UI                          reconcile         └▶ Weaviate Engram (reconciled memory)
                                               decay + LLM        └▶ OpenRouter / local `claude -p`
-        any agent (Claude Code / Codex / opencode) ──stdio──▶  MCP server (same code, same DB)
+        any agent (Claude Code / Codex / opencode) ──`tabzero` CLI──▶  same daemon, same DB
 ```
 
 - **Local layer** (SQLite) = instant trails + exact-reopen truth + decay. Runs in real time, fully offline.
@@ -60,20 +60,20 @@ Every heuristic — canonicalize, dedup, sessionize, cluster, decay — is math 
 npx tabzero
 ```
 
-A guided wizard stages the extension, optionally takes a [Weaviate Engram key](docs/engram.md), offers to register the MCP into your AI tools, and starts the daemon. Then:
+A guided wizard stages the extension, optionally takes a [Weaviate Engram key](docs/engram.md), and starts the daemon. Then:
 
 1. Open `chrome://extensions` (Chrome, Edge, Brave, Arc…) and enable **Developer mode**.
 2. **Load unpacked** → the folder the wizard printed (`~/.tabzero/extension`).
 3. Pin **Tab Zero**, click it, and browse a bit — trails appear automatically.
 
 No key needed to start. Add an Engram key anytime with `npx tabzero key`.
-Other commands: `npx tabzero start` · `npx tabzero mcp install` · `npx tabzero path` · `npx tabzero uninstall`.
+Other commands: `npx tabzero start` · `npx tabzero path` · `npx tabzero uninstall` · `npx tabzero help`.
 
 ### Run from source (dev)
 
 ```bash
 pnpm install
-pnpm build:server        # compiles the daemon + MCP entrypoints -> server/dist
+pnpm build:server        # compiles the daemon + CLI -> server/dist
 pnpm build:ext           # bundles the extension -> extension/dist
 pnpm backend             # start the daemon (keep it running)
 ```
@@ -106,36 +106,36 @@ Then `npx tabzero key`, paste your `eng_…` key, and restart the daemon. The po
 
 ---
 
-## Use your browsing memory from any agent (MCP)
+## Use your browsing memory from any agent
 
-The MCP server exposes five tools over **stdio** (works across every harness):
+There's no plugin to install and nothing to restart: any agent with shell access can query your
+trails through the `tabzero` command. Point it at these once (a line in `CLAUDE.md`, `AGENTS.md`, or
+your system prompt) and it can pull your browsing memory on demand.
 
-| Tool | What it does |
+| Command | What it does |
 |---|---|
-| `search_trails` | Natural-language search over your trails |
-| `get_trail` | One trail's recap + its page list |
-| `resurrect_trail` | Recap + the exact URLs to reopen, from a query or id |
-| `week_in_tabs` | The vanity stats (rabbit holes, abandoned trails, 3am incidents…) |
-| `research_interests` | The durable themes you keep returning to across many trails |
+| `tabzero search [query]` | Natural-language search over your trails (empty query lists all) |
+| `tabzero trails` | Every trail, newest first |
+| `tabzero trail <id\|query>` | One trail's recap + its page list |
+| `tabzero resurrect <query>` | Recap + the exact URLs to reopen, from a query or id |
+| `tabzero week` | The vanity stats (rabbit holes, abandoned trails, 3am incidents…) |
+| `tabzero interests` | The durable themes you keep returning to across many trails |
 
-> Run `pnpm build:server` once so `server/dist/mcp.js` exists.
+Add `--json` to any of them for machine-readable output — that's the form an agent should use:
 
-**Claude Code** — already wired via [`.mcp.json`](.mcp.json) in this repo. Run `claude` here and try:
-> _"resurrect my GPU pricing research"_ · _"what's my most abandoned trail this week?"_ · _"what have I been into lately?"_
-
-**Codex** — add to `~/.codex/config.toml`:
-```toml
-[mcp_servers.tabzero]
-command = "node"
-args = ["/ABSOLUTE/PATH/TO/TabZero/server/dist/mcp.js"]
+```bash
+tabzero search "gpu pricing" --json
 ```
 
-**opencode** — add to `opencode.json`:
-```jsonc
-{ "mcp": { "tabzero": { "type": "local", "command": ["node", "/ABSOLUTE/PATH/TO/TabZero/server/dist/mcp.js"] } } }
-```
+They query the running daemon over HTTP, so `tabzero start` has to be up (it needs to be anyway, to
+capture anything). Exit code is non-zero with a message on stderr when it isn't.
 
-`npx tabzero mcp install` writes these for you across every harness it detects (Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, opencode, Codex, Pi, Hermes, OpenClaw).
+Try it with any agent: _"resurrect my GPU pricing research"_ · _"what's my most abandoned trail this
+week?"_ · _"what have I been into lately?"_
+
+> **Upgrading from an older version?** Tab Zero used to ship an MCP server. The CLI replaced it —
+> run `npx tabzero mcp-cleanup` once to drop the stale registrations, or your harnesses will keep
+> trying to spawn a server that no longer exists.
 
 ---
 
@@ -170,11 +170,10 @@ Data lives in `./.tabzero/tabzero.db` (SQLite, WAL) in dev, or `~/.tabzero/tabze
 ## Repo layout
 
 ```
-server/         Node daemon + trail engine + Engram client + MCP server (TypeScript)
+server/         Node daemon + trail engine + Engram client + agent CLI (TypeScript)
   src/
     index.ts        daemon entrypoint (HTTP + scheduler)
-    mcp.ts          stdio MCP server (5 tools)
-    cli.ts          the `tabzero` command (setup, install, key, uninstall)
+    cli.ts          the `tabzero` command (setup + the agent-facing query surface)
     core/           config.ts, db.ts (schema + handle), types.ts, llm.ts (backend adapter)
     capture/        canonical.ts   URL canonicalization + embedding-free lexical vectors
                     pipeline.ts    ingestion: canonicalize -> dedup -> tokenize -> cluster
@@ -185,7 +184,7 @@ server/         Node daemon + trail engine + Engram client + MCP server (TypeScr
                     sync.ts        enrichment passes + Engram flush (settle-gated)
     daemon/         http.ts        localhost API the extension talks to
                     scheduler.ts   adaptive, backing-off enrichment scheduler
-    setup/          mcp-install.ts registers the MCP across every agent harness
+    setup/          mcp-install.ts purges MCP registrations left by older versions
     scripts/        seed.ts (demo data) · reset.ts (clean slate)
   test/           node:test units for canonicalization + decay math (`pnpm test`)
 extension/      MV3 extension: capture (background) + popup UI (TypeScript, esbuild)

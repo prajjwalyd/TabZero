@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "tabzero": {
-      "command": "node",
-      "args": ["server/dist/mcp.js"],
-      "env": { "NODE_NO_WARNINGS": "1" }
-    }
-  }
-}

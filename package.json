@@ -5,21 +5,42 @@
   "description": "Close every tab guilt-free. Your browser remembers why and any agent can resurrect it. Built on Weaviate Engram.",
   "license": "MIT",
   "author": "Prajjwal Yadav (https://github.com/prajjwalyd)",
-  "repository": { "type": "git", "url": "git+https://github.com/prajjwalyd/TabZero.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/prajjwalyd/TabZero.git"
+  },
   "homepage": "https://github.com/prajjwalyd/TabZero#readme",
-  "bugs": { "url": "https://github.com/prajjwalyd/TabZero/issues" },
+  "bugs": {
+    "url": "https://github.com/prajjwalyd/TabZero/issues"
+  },
   "keywords": [
-    "mcp", "model-context-protocol", "weaviate", "engram", "agent-memory",
-    "chrome-extension", "tabs", "browser-history", "productivity", "ai"
+    "weaviate",
+    "engram",
+    "agent-memory",
+    "chrome-extension",
+    "tabs",
+    "browser-history",
+    "productivity",
+    "ai",
+    "cli",
+    "agent-tools"
   ],
   "packageManager": "pnpm@10.34.1",
-  "bin": { "tabzero": "bin/tabzero.js" },
-  "files": ["bin", "server/dist", "extension/dist", "README.md"],
-  "engines": { "node": ">=22.5" },
+  "bin": {
+    "tabzero": "bin/tabzero.js"
+  },
+  "files": [
+    "bin",
+    "server/dist",
+    "extension/dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.5"
+  },
   "scripts": {
     "backend": "NODE_NO_WARNINGS=1 tsx server/src/index.ts",
     "backend:dev": "NODE_NO_WARNINGS=1 tsx watch server/src/index.ts",
-    "mcp": "NODE_NO_WARNINGS=1 tsx server/src/mcp.ts",
     "seed": "NODE_NO_WARNINGS=1 tsx server/src/scripts/seed.ts",
     "reset": "NODE_NO_WARNINGS=1 tsx server/src/scripts/reset.ts",
     "build:server": "tsc -p server/tsconfig.json",
@@ -31,9 +52,7 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@clack/prompts": "^1.7.0",
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "zod": "^3.23.8"
+    "@clack/prompts": "^1.7.0"
   },
   "devDependencies": {
     "@phosphor-icons/core": "^2.1.1",

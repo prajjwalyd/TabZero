@@ -1,19 +1,18 @@
-// Registers (and removes) the Tab Zero MCP server in the config of every agent harness the user
-// has installed. Each harness uses a different schema/location, so every target owns its own
-// detect + install + uninstall. All writers are defensive: they back up the file first and merge
-// (never clobber) other servers. A failed target reports an error instead of throwing, so one bad
-// harness can't sink the rest.
+// Cleanup-only remnant of the MCP era.
+//
+// Tab Zero used to ship an MCP server and register it into every agent harness it could detect. The
+// agent-facing surface is now the `tabzero` CLI instead (see cli.ts), so the install paths are gone —
+// but the *removal* paths have to stay for a while: a harness that still has a `tabzero` entry
+// pointing at the deleted server/dist/mcp.js reports a failed MCP server on every single launch.
+// `tabzero mcp-cleanup` (and `tabzero uninstall`) purge those entries.
+//
+// Safe to delete this file entirely once the old registrations are gone from the wild.
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
-export interface McpCommand {
-  command: string;
-  args: string[];
-}
-
-export interface InstallResult {
+export interface CleanupResult {
   ok: boolean;
   detail: string;
 }
@@ -21,24 +20,17 @@ export interface InstallResult {
 export interface Target {
   id: string;
   name: string;
-  hint: string;
-  detected: () => boolean;
-  install: (cmd: McpCommand) => InstallResult;
-  uninstall: () => InstallResult;
+  uninstall: () => CleanupResult;
 }
 
 const NAME = 'tabzero';
+const NOT_PRESENT = 'not present';
 const home = (...p: string[]) => join(homedir(), ...p);
 
 function appSupport(app: string): string {
   if (platform() === 'darwin') return home('Library', 'Application Support', app);
   if (platform() === 'win32') return join(process.env.APPDATA || home('AppData', 'Roaming'), app);
   return home('.config', app); // linux
-}
-
-function onPath(bin: string): boolean {
-  const finder = platform() === 'win32' ? 'where' : 'which';
-  try { return spawnSync(finder, [bin], { stdio: 'ignore' }).status === 0; } catch { return false; }
 }
 
 function readJson(path: string): Record<string, any> | null {
@@ -51,127 +43,55 @@ function readJson(path: string): Record<string, any> | null {
   }
 }
 
-function backup(path: string): void {
-  if (existsSync(path)) copyFileSync(path, path + '.tabzero-bak');
-}
-
 function writeJson(path: string, obj: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
-  backup(path);
+  if (existsSync(path)) copyFileSync(path, path + '.tabzero-bak'); // back up before every rewrite
   writeFileSync(path, JSON.stringify(obj, null, 2) + '\n');
 }
 
-/** Upsert into a `{ [rootKey]: { [NAME]: serverDef } }`-shaped JSON config (the common MCP shape). */
-function upsertJson(path: string, rootKey: string, def: unknown): InstallResult {
-  const cfg = readJson(path);
-  if (cfg === null) return { ok: false, detail: `couldn't parse ${path} (left untouched)` };
-  if (typeof cfg[rootKey] !== 'object' || cfg[rootKey] === null) cfg[rootKey] = {};
-  cfg[rootKey][NAME] = def;
-  writeJson(path, cfg);
-  return { ok: true, detail: path };
-}
-
-/** Remove NAME from a `{ [rootKey]: { [NAME]: ... } }`-shaped JSON config. */
-function removeJson(path: string, rootKey: string): InstallResult {
-  if (!existsSync(path)) return { ok: true, detail: 'not present' };
-  const cfg = readJson(path);
-  if (cfg === null) return { ok: false, detail: `couldn't parse ${path} (left untouched)` };
-  if (cfg[rootKey] && Object.prototype.hasOwnProperty.call(cfg[rootKey], NAME)) {
-    delete cfg[rootKey][NAME];
-    writeJson(path, cfg);
-    return { ok: true, detail: `removed from ${path}` };
-  }
-  return { ok: true, detail: 'not present' };
-}
-
-/** Like upsertJson but for a nested key path, e.g. ['mcp','servers'] -> { mcp: { servers: { NAME } } }. */
-function upsertJsonPath(path: string, keys: string[], def: unknown): InstallResult {
+/** Remove NAME from a nested key path in a JSON config, e.g. ['mcpServers'] or ['mcp','servers']. */
+function removeJsonPath(path: string, keys: string[]): CleanupResult {
+  if (!existsSync(path)) return { ok: true, detail: NOT_PRESENT };
   const cfg = readJson(path);
   if (cfg === null) return { ok: false, detail: `couldn't parse ${path} (left untouched)` };
   let node: Record<string, any> = cfg;
   for (const k of keys) {
-    if (typeof node[k] !== 'object' || node[k] === null) node[k] = {};
+    if (typeof node?.[k] !== 'object' || node[k] === null) return { ok: true, detail: NOT_PRESENT };
     node = node[k];
   }
-  node[NAME] = def;
+  if (!Object.prototype.hasOwnProperty.call(node, NAME)) return { ok: true, detail: NOT_PRESENT };
+  delete node[NAME];
   writeJson(path, cfg);
-  return { ok: true, detail: path };
+  return { ok: true, detail: `removed from ${path}` };
 }
 
-/** Remove NAME from a nested key path in a JSON config. */
-function removeJsonPath(path: string, keys: string[]): InstallResult {
-  if (!existsSync(path)) return { ok: true, detail: 'not present' };
-  const cfg = readJson(path);
-  if (cfg === null) return { ok: false, detail: `couldn't parse ${path} (left untouched)` };
-  let node: Record<string, any> = cfg;
-  for (const k of keys) {
-    if (typeof node?.[k] !== 'object' || node[k] === null) return { ok: true, detail: 'not present' };
-    node = node[k];
-  }
-  if (Object.prototype.hasOwnProperty.call(node, NAME)) {
-    delete node[NAME];
-    writeJson(path, cfg);
-    return { ok: true, detail: `removed from ${path}` };
-  }
-  return { ok: true, detail: 'not present' };
+function jsonTarget(id: string, name: string, path: string, keys: string[]): Target {
+  return { id, name, uninstall: () => removeJsonPath(path, keys) };
 }
 
-// A JSON target: same file, same rootKey, differing only in the server def shape.
-function jsonTarget(
-  id: string, name: string, hint: string, path: string, rootKey: string,
-  detected: () => boolean, def: (cmd: McpCommand) => unknown,
-): Target {
-  return {
-    id, name, hint, detected,
-    install: (cmd) => upsertJson(path, rootKey, def(cmd)),
-    uninstall: () => removeJson(path, rootKey),
-  };
-}
-
+/** Claude Code owns a large managed ~/.claude.json, so let its own CLI do the edit. */
 function claudeCode(): Target {
   return {
-    id: 'claude-code', name: 'Claude Code', hint: 'CLI',
-    detected: () => onPath('claude'),
-    install: (cmd) => {
-      // Official CLI is the safe path — ~/.claude.json is large and managed, so we don't hand-edit it.
-      // `add-json` errors if the server already exists, so remove first for an idempotent re-install.
-      const json = JSON.stringify({ command: cmd.command, args: cmd.args });
-      spawnSync('claude', ['mcp', 'remove', NAME, '-s', 'user'], { stdio: 'ignore' });
-      const r = spawnSync('claude', ['mcp', 'add-json', NAME, '-s', 'user', json], { stdio: 'ignore' });
-      return r.status === 0
-        ? { ok: true, detail: 'claude mcp add-json (user scope)' }
-        : { ok: false, detail: 'claude mcp add-json failed — run it manually' };
-    },
+    id: 'claude-code',
+    name: 'Claude Code',
     uninstall: () => {
       const r = spawnSync('claude', ['mcp', 'remove', NAME, '-s', 'user'], { stdio: 'ignore' });
-      return { ok: true, detail: r.status === 0 ? 'claude mcp remove (user scope)' : 'not present' };
+      return { ok: true, detail: r.status === 0 ? 'claude mcp remove (user scope)' : NOT_PRESENT };
     },
   };
 }
 
+/** Codex keeps MCP servers as TOML tables; drop the [mcp_servers.tabzero] block and its keys. */
 function codex(): Target {
   const path = home('.codex', 'config.toml');
   const header = `[mcp_servers.${NAME}]`;
   return {
-    id: 'codex', name: 'Codex', hint: 'CLI',
-    detected: () => onPath('codex') || existsSync(home('.codex')),
-    install: (cmd) => {
-      const block =
-        `${header}\n` +
-        `command = ${JSON.stringify(cmd.command)}\n` +
-        `args = [${cmd.args.map((a) => JSON.stringify(a)).join(', ')}]\n`;
-      let body = existsSync(path) ? readFileSync(path, 'utf8') : '';
-      if (body.includes(header)) return { ok: true, detail: 'already present in config.toml' };
-      mkdirSync(dirname(path), { recursive: true });
-      backup(path);
-      if (body && !body.endsWith('\n')) body += '\n';
-      writeFileSync(path, body + (body ? '\n' : '') + block);
-      return { ok: true, detail: path };
-    },
+    id: 'codex',
+    name: 'Codex',
     uninstall: () => {
-      if (!existsSync(path)) return { ok: true, detail: 'not present' };
+      if (!existsSync(path)) return { ok: true, detail: NOT_PRESENT };
       const body = readFileSync(path, 'utf8');
-      if (!body.includes(header)) return { ok: true, detail: 'not present' };
+      if (!body.includes(header)) return { ok: true, detail: NOT_PRESENT };
       const out: string[] = [];
       let skip = false;
       for (const ln of body.split('\n')) {
@@ -179,64 +99,46 @@ function codex(): Target {
         if (skip && /^\s*\[/.test(ln)) skip = false; // …and its keys until the next TOML table
         if (!skip) out.push(ln);
       }
-      backup(path);
+      copyFileSync(path, path + '.tabzero-bak');
       writeFileSync(path, out.join('\n').replace(/\n{3,}/g, '\n\n'));
       return { ok: true, detail: `removed from ${path}` };
     },
   };
 }
 
+/** Hermes stores MCP servers as indentation-sensitive YAML — let its CLI own the edit. */
 function hermes(): Target {
-  // Hermes stores MCP servers as YAML in ~/.hermes/config.yaml. We have no YAML serializer here, so
-  // we let its own CLI own the merge (safer than hand-editing indentation-sensitive YAML).
   return {
-    id: 'hermes', name: 'Hermes', hint: 'agent',
-    detected: () => onPath('hermes') || existsSync(home('.hermes')),
-    install: (cmd) => {
-      // `add` rejects an existing name, so clear it first for an idempotent re-install.
-      spawnSync('hermes', ['mcp', 'remove', NAME], { stdio: 'ignore' });
-      const r = spawnSync('hermes', ['mcp', 'add', NAME, '--command', cmd.command, '--args', ...cmd.args], { stdio: 'ignore' });
-      return r.status === 0
-        ? { ok: true, detail: 'hermes mcp add' }
-        : { ok: false, detail: 'hermes mcp add failed — run it manually' };
-    },
+    id: 'hermes',
+    name: 'Hermes',
     uninstall: () => {
       const r = spawnSync('hermes', ['mcp', 'remove', NAME], { stdio: 'ignore' });
-      return { ok: true, detail: r.status === 0 ? 'hermes mcp remove' : 'not present (or set enabled: false in ~/.hermes/config.yaml)' };
+      return { ok: true, detail: r.status === 0 ? 'hermes mcp remove' : NOT_PRESENT };
     },
-  };
-}
-
-function openclaw(): Target {
-  // OpenClaw nests servers under mcp.servers in ~/.openclaw/openclaw.json (not a top-level mcpServers).
-  const path = home('.openclaw', 'openclaw.json');
-  return {
-    id: 'openclaw', name: 'OpenClaw', hint: 'agent',
-    detected: () => onPath('openclaw') || existsSync(home('.openclaw')),
-    install: (cmd) => upsertJsonPath(path, ['mcp', 'servers'], { command: cmd.command, args: cmd.args }),
-    uninstall: () => removeJsonPath(path, ['mcp', 'servers']),
   };
 }
 
 export function allTargets(): Target[] {
-  const server = (cmd: McpCommand) => ({ command: cmd.command, args: cmd.args });
   return [
     claudeCode(),
-    jsonTarget('claude-desktop', 'Claude Desktop', 'app', join(appSupport('Claude'), 'claude_desktop_config.json'),
-      'mcpServers', () => existsSync(appSupport('Claude')), server),
-    jsonTarget('cursor', 'Cursor', 'editor', home('.cursor', 'mcp.json'),
-      'mcpServers', () => existsSync(home('.cursor')), server),
-    jsonTarget('windsurf', 'Windsurf', 'editor', home('.codeium', 'windsurf', 'mcp_config.json'),
-      'mcpServers', () => existsSync(home('.codeium', 'windsurf')), server),
-    jsonTarget('vscode', 'VS Code', 'Copilot', join(appSupport('Code'), 'User', 'mcp.json'),
-      'servers', () => existsSync(appSupport('Code')), (cmd) => ({ type: 'stdio', command: cmd.command, args: cmd.args })),
-    jsonTarget('opencode', 'opencode', 'CLI', home('.config', 'opencode', 'opencode.json'),
-      'mcp', () => onPath('opencode') || existsSync(home('.config', 'opencode')),
-      (cmd) => ({ type: 'local', command: [cmd.command, ...cmd.args], enabled: true })),
+    jsonTarget('claude-desktop', 'Claude Desktop', join(appSupport('Claude'), 'claude_desktop_config.json'), ['mcpServers']),
+    jsonTarget('cursor', 'Cursor', home('.cursor', 'mcp.json'), ['mcpServers']),
+    jsonTarget('windsurf', 'Windsurf', home('.codeium', 'windsurf', 'mcp_config.json'), ['mcpServers']),
+    jsonTarget('vscode', 'VS Code', join(appSupport('Code'), 'User', 'mcp.json'), ['servers']),
+    jsonTarget('opencode', 'opencode', home('.config', 'opencode', 'opencode.json'), ['mcp']),
     codex(),
-    jsonTarget('pi', 'Pi', 'agent', home('.pi', 'agent', 'mcp.json'),
-      'mcpServers', () => onPath('pi') || existsSync(home('.pi', 'agent')), server),
+    jsonTarget('pi', 'Pi', home('.pi', 'agent', 'mcp.json'), ['mcpServers']),
     hermes(),
-    openclaw(),
+    jsonTarget('openclaw', 'OpenClaw', home('.openclaw', 'openclaw.json'), ['mcp', 'servers']),
   ];
+}
+
+/** Purge every stale Tab Zero MCP registration. Returns one line per target that had something. */
+export function cleanupAll(): string[] {
+  const lines: string[] = [];
+  for (const t of allTargets()) {
+    const r = t.uninstall();
+    if (r.detail !== NOT_PRESENT) lines.push(`${r.ok ? '✓' : '✗'} ${t.name} — ${r.detail}`);
+  }
+  return lines;
 }
