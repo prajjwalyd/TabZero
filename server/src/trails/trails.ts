@@ -113,11 +113,27 @@ export function resurrectUrls(id: string): string[] {
   return rows.length ? rows.map((r) => r.url) : trailUrls(id);
 }
 
+/**
+ * Whether a cached recap needs (re)generating. Pulled out as a pure predicate because getting it wrong
+ * is invisible: gating on missing-or-dirty alone meant a trail recapped LOCALLY before Engram finished
+ * extracting kept that placeholder forever — 9 of 20 trails in a real database were frozen that way —
+ * even though summarizeTrail is specifically built to retry Engram on every call until its version
+ * lands. The retry costs an Engram search, not an LLM call: summarizeTrail returns the cached
+ * placeholder on a miss.
+ */
+export function recapNeedsRefresh(
+  t: { summary: string | null; summary_dirty: number; summary_source: string | null },
+  engramEnabled: boolean,
+): boolean {
+  if (!t.summary || t.summary_dirty) return true;
+  return engramEnabled && t.summary_source !== 'engram';
+}
+
 export async function getTrailDetail(id: string, opts: { summarize?: boolean } = {}): Promise<TrailDetail | null> {
   const t = getTrail(id);
   if (!t) return null;
   let summary = t.summary;
-  if (opts.summarize && (!summary || t.summary_dirty)) summary = await summarizeTrail(id);
+  if (opts.summarize && recapNeedsRefresh(t, cfg.ENGRAM_ENABLED)) summary = await summarizeTrail(id);
   return { ...toDTO(t, Date.now()), summary, pages: trailPages(id) };
 }
 

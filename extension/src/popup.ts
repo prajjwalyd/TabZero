@@ -36,13 +36,11 @@ function rel(ts: number): string {
   const h = m / 60; if (h < 24) return `${Math.round(h)}h ago`;
   return `${Math.round(h / 24)}d ago`;
 }
-function debounce<T extends (...a: any[]) => void>(fn: T, ms: number): T {
-  let t: ReturnType<typeof setTimeout>;
-  return ((...a: any[]) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }) as T;
-}
 
 let view: 'trails' | 'week' = 'trails';
 let groupBy = false;
+/** Last list fetched from /trails, so typing can filter it client-side with no network call. */
+let loaded: Trail[] = [];
 
 /**
  * Flag whether this platform uses classic (always-visible, gutter-reserving) scrollbars, so popup.css
@@ -75,7 +73,13 @@ async function init(): Promise<void> {
       void render();
     }),
   );
-  ($('search') as HTMLInputElement).addEventListener('input', debounce(onSearch, 280));
+  const box = $('search') as HTMLInputElement;
+  box.addEventListener('input', onType);
+  box.addEventListener('keydown', (e) => {
+    if ((e as KeyboardEvent).key !== 'Enter') return;
+    const q = box.value.trim();
+    if (q) void runSearch(q);
+  });
   $('nukeBtn').addEventListener('click', onNuke);
   $('refreshBtn').addEventListener('click', () => void refresh());
   $('groupToggle').addEventListener('click', () => {
@@ -130,6 +134,7 @@ async function render(): Promise<void> {
   main.innerHTML = '';
   const { trails } = await api.get('/trails');
   const list = (trails as Trail[]) || [];
+  loaded = list;
 
   const bar = $('listBar');
   bar.style.display = list.length ? 'flex' : 'none';
@@ -302,11 +307,45 @@ async function runSearch(q: string): Promise<void> {
   }
 }
 
-const onSearch = (e: Event): void => {
+/**
+ * Typing FILTERS the trails already on screen — no network, no debounce, no spinner. Semantic search
+ * only runs on Enter (runSearch).
+ *
+ * It used to fire a debounced /search on every keystroke, and that endpoint awaits Engram Cloud
+ * unconditionally. So typing "gpu pricing" made ~5 cloud round trips on prefixes like "gpu pric",
+ * which carry no meaning to embed, and each one blanked the list for a spinner. A prefix is the wrong
+ * input for semantic search; a complete thought is, and Enter is how you say you have one.
+ */
+const onType = (e: Event): void => {
   const q = (e.target as HTMLInputElement).value.trim();
-  if (!q) { searchSeq++; void render(); return; } // cancel any in-flight search, restore the list
-  void runSearch(q);
+  searchSeq++; // supersede any in-flight semantic search
+  if (!q) { void render(); return; }
+  filterLoaded(q);
 };
+
+/** Narrow the loaded trails by literal substring — label, one-liner, category, domain. */
+function filterLoaded(q: string): void {
+  const toks = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = loaded.filter((t) => {
+    const hay = `${t.label} ${t.oneLiner ?? ''} ${t.category} ${t.topDomain ?? ''}`.toLowerCase();
+    return toks.every((w) => hay.includes(w));
+  });
+  const main = $('main');
+  main.innerHTML = '';
+  $('listBar').style.display = 'none';
+  if (!hits.length) {
+    // The filter can only see what's loaded; Engram can see meaning. Make that escalation obvious.
+    const d = el('div', 'empty');
+    d.innerHTML = `No loaded trail matches \u201c${q}\u201d.<br/>Press <b>Enter</b> to search your memory semantically.`;
+    main.appendChild(d);
+    return;
+  }
+  const sorted = hits.slice().sort((a, b) => b.lastActive - a.lastActive);
+  for (const t of sorted) main.appendChild(trailRow(t, undefined, undefined, true));
+  const hint = el('div', 'empty', 'Press Enter to search your full memory, including archived trails.');
+  hint.style.paddingTop = '18px';
+  main.appendChild(hint);
+}
 
 async function renderWeek(): Promise<void> {
   const main = $('main');

@@ -12,7 +12,7 @@ process.env.TABZERO_DATA = tmp;
 process.env.TABZERO_USER_ID = 'test-user';
 process.env.ENGRAM_API_KEY = ''; // never reach the network from a unit test
 
-const { computeLiveness, statusFor, listTrails } = await import('../src/trails/trails.ts');
+const { computeLiveness, statusFor, listTrails, recapNeedsRefresh } = await import('../src/trails/trails.ts');
 const { db } = await import('../src/core/db.ts');
 const cfg = await import('../src/core/config.ts');
 
@@ -103,4 +103,28 @@ test('the local interest fallback needs recurrence or depth, not just a long sit
   assert.ok(labels.includes('Recurring theme'), 'recurrence qualifies');
   assert.ok(labels.includes('Deep investigation'), 'depth qualifies');
   assert.ok(!labels.includes('One long sitting'), '45 minutes in one session is not a durable interest');
+});
+
+// A trail recapped locally before Engram finished extracting must keep asking Engram. Gating only on
+// missing-or-dirty froze the placeholder permanently — it left 9 of 20 trails in a real database
+// showing a local recap that could never upgrade, silently voiding "Engram authors your recaps".
+test('a fresh LOCAL recap still needs refreshing while Engram is on', () => {
+  const row = (summary: string | null, dirty: number, source: string | null) =>
+    ({ summary, summary_dirty: dirty, summary_source: source });
+
+  // The bug: fresh, not dirty, but authored locally.
+  assert.equal(recapNeedsRefresh(row('a local recap', 0, 'local'), true), true, 'local placeholder must retry Engram');
+  assert.equal(recapNeedsRefresh(row('a heuristic recap', 0, 'heuristic'), true), true, 'heuristic must retry too');
+
+  // Engram's own recap is canonical — stop asking.
+  assert.equal(recapNeedsRefresh(row('engram prose', 0, 'engram'), true), false, 'an Engram recap is final');
+
+  // With Engram off there is nothing to upgrade to, so a fresh local recap must NOT burn an LLM call.
+  assert.equal(recapNeedsRefresh(row('a local recap', 0, 'local'), false), false, 'no key: keep the placeholder');
+
+  // Missing or dirty always needs work, either way.
+  for (const engramOn of [true, false]) {
+    assert.equal(recapNeedsRefresh(row(null, 0, null), engramOn), true, 'no recap yet');
+    assert.equal(recapNeedsRefresh(row('stale', 1, 'engram'), engramOn), true, 'dirty recap');
+  }
 });
