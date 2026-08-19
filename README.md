@@ -35,24 +35,23 @@ The exact-reopen source of truth is a local SQLite log; the reconciled, evolving
 
 ```mermaid
 flowchart LR
-  subgraph machine["your machine"]
+  subgraph local["your machine — works offline"]
     ext["Chrome extension<br/>capture · popup · Tab Zero"]
-    agent["any agent<br/>Claude Code · Codex · opencode"]
+    agent["any agent<br/>with shell access"]
     daemon["Node daemon :8787<br/>reconcile · cluster · decay"]
     db[("SQLite<br/>event log + trails")]
+    ext -->|"localhost HTTP"| daemon
+    agent -->|"tabzero CLI"| daemon
+    daemon <--> db
   end
-  engram["Weaviate Engram<br/>reconciled memory"]
-  llm["LLM<br/>OpenRouter · claude -p"]
-
-  ext -->|"localhost HTTP"| daemon
-  agent -->|"tabzero CLI"| daemon
-  daemon <--> db
+  subgraph net["opt-in, over the network"]
+    engram["Weaviate Engram<br/>reconciled memory"]
+    llm["LLM<br/>OpenRouter · claude -p"]
+  end
   daemon -.->|"titles + domains"| engram
   daemon -.->|"labels + recaps"| llm
+  db ~~~ engram
 ```
-
-Solid arrows never leave your machine. The two dotted ones are the only things that do, they carry
-titles and domains rather than pages, and both are opt-in.
 
 - **Local layer** (SQLite) = instant trails + exact-reopen truth + decay. Runs in real time, fully offline.
 - **Engram** = cross-time reconciliation (one bounded, evolving memory per trail) + semantic recall + agent-queryable memory. Catches up asynchronously.
