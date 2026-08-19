@@ -29,8 +29,13 @@ const { TOKEN, PORT } = await import('../src/core/config.ts');
 const BASE = `http://127.0.0.1:${PORT}`;
 let server: import('node:http').Server;
 
-before(() => { server = startHttp(); });
-after(() => { server.close(); rmSync(tmp, { recursive: true, force: true }); });
+before(() => {
+  server = startHttp();
+});
+after(() => {
+  server.close();
+  rmSync(tmp, { recursive: true, force: true });
+});
 
 /** fetch() rewrites Host from the URL, so send the raw request ourselves to control it. */
 function rawGet(path: string, host: string, token?: string): Promise<{ status: number; body: string }> {
@@ -39,12 +44,12 @@ function rawGet(path: string, host: string, token?: string): Promise<{ status: n
       const sock = connect(PORT, '127.0.0.1', () => {
         sock.write(
           `GET ${path} HTTP/1.1\r\nHost: ${host}\r\n` +
-          (token ? `x-tabzero-token: ${token}\r\n` : '') +
-          'Connection: close\r\n\r\n',
+            (token ? `x-tabzero-token: ${token}\r\n` : '') +
+            'Connection: close\r\n\r\n',
         );
       });
       let raw = '';
-      sock.on('data', (c) => (raw += c));
+      sock.on('data', (c: Buffer) => (raw += c.toString()));
       sock.on('end', () => {
         const status = Number(raw.slice(9, 12));
         resolve({ status, body: raw.slice(raw.indexOf('\r\n\r\n') + 4) });
@@ -86,7 +91,13 @@ test('the Host gate covers the data routes, and runs before the token comparison
 });
 
 test('every loopback name the extension and CLI might use is accepted', async () => {
-  for (const host of [`127.0.0.1:${PORT}`, `localhost:${PORT}`, '127.0.0.1', 'localhost', `LOCALHOST:${PORT}`]) {
+  for (const host of [
+    `127.0.0.1:${PORT}`,
+    `localhost:${PORT}`,
+    '127.0.0.1',
+    'localhost',
+    `LOCALHOST:${PORT}`,
+  ]) {
     const r = await rawGet('/health', host);
     assert.equal(r.status, 200, `Host: ${host} must be allowed (it is us), got ${r.status}`);
   }
@@ -96,7 +107,17 @@ test('an oversized body is refused instead of being buffered without limit', asy
   const res = await fetch(`${BASE}/events`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-tabzero-token': TOKEN },
-    body: JSON.stringify({ events: [{ ts: Date.now(), type: 'navigate', tabId: 1, url: 'https://a.test/', title: 'x'.repeat(5 * 1024 * 1024) }] }),
+    body: JSON.stringify({
+      events: [
+        {
+          ts: Date.now(),
+          type: 'navigate',
+          tabId: 1,
+          url: 'https://a.test/',
+          title: 'x'.repeat(5 * 1024 * 1024),
+        },
+      ],
+    }),
   });
   assert.equal(res.status, 413, 'a 5MB body must be rejected, not accumulated into a string');
 });

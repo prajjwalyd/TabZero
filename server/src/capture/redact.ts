@@ -19,20 +19,73 @@
 /** Param names whose value is always removed, regardless of how it looks. */
 const SECRET_PARAMS = new Set([
   // credentials / bearer material
-  'token', 'access_token', 'refresh_token', 'id_token', 'auth', 'authorization', 'bearer', 'jwt',
-  'password', 'passwd', 'pwd', 'pass', 'secret', 'client_secret', 'api_key', 'apikey', 'apitoken',
+  'token',
+  'access_token',
+  'refresh_token',
+  'id_token',
+  'auth',
+  'authorization',
+  'bearer',
+  'jwt',
+  'password',
+  'passwd',
+  'pwd',
+  'pass',
+  'secret',
+  'client_secret',
+  'api_key',
+  'apikey',
+  'apitoken',
   // OAuth / OIDC / SSO exchange
-  'code', 'code_challenge', 'code_verifier', 'state', 'nonce', 'sso', 'saml', 'samlresponse',
-  'assertion', 'ticket', 'id_token_hint', 'login_hint',
+  'code',
+  'code_challenge',
+  'code_verifier',
+  'state',
+  'nonce',
+  'sso',
+  'saml',
+  'samlresponse',
+  'assertion',
+  'ticket',
+  'id_token_hint',
+  'login_hint',
   // sessions
-  'session', 'sessionid', 'session_id', 'sid', 'sessid', 'phpsessid', 'jsessionid',
+  'session',
+  'sessionid',
+  'session_id',
+  'sid',
+  'sessid',
+  'phpsessid',
+  'jsessionid',
   // signatures (presigned URLs — S3 etc.)
-  'signature', 'sig', 'hmac', 'mac', 'x-amz-signature', 'x-amz-credential', 'x-amz-security-token',
+  'signature',
+  'sig',
+  'hmac',
+  'mac',
+  'x-amz-signature',
+  'x-amz-credential',
+  'x-amz-security-token',
   // one-time / invite / verification
-  'otp', 'totp', 'mfa', '2fa', 'invite', 'invitation', 'confirmation_token', 'verification_token',
-  'magic', 'magiclink', 'reset_token', 'unsubscribe',
+  'otp',
+  'totp',
+  'mfa',
+  '2fa',
+  'invite',
+  'invitation',
+  'confirmation_token',
+  'verification_token',
+  'magic',
+  'magiclink',
+  'reset_token',
+  'unsubscribe',
   // direct PII
-  'email', 'e_mail', 'mail', 'phone', 'tel', 'mobile', 'ssn',
+  'email',
+  'e_mail',
+  'mail',
+  'phone',
+  'tel',
+  'mobile',
+  'ssn',
 ]);
 
 /**
@@ -41,9 +94,38 @@ const SECRET_PARAMS = new Set([
  * without this list the heuristic would eat them.
  */
 const INTENT_PARAMS = new Set([
-  'q', 'query', 'search', 'search_query', 's', 'k', 'keywords', 'text', 'term',
-  'v', 'p', 'page', 'id', 'start', 'offset', 'limit', 'sort', 'order', 'filter', 'tab',
-  'lang', 'hl', 'locale', 'tz', 'time', 'ts', 't', 'type', 'category', 'topic', 'title', 'name',
+  'q',
+  'query',
+  'search',
+  'search_query',
+  's',
+  'k',
+  'keywords',
+  'text',
+  'term',
+  'v',
+  'p',
+  'page',
+  'id',
+  'start',
+  'offset',
+  'limit',
+  'sort',
+  'order',
+  'filter',
+  'tab',
+  'lang',
+  'hl',
+  'locale',
+  'tz',
+  'time',
+  'ts',
+  't',
+  'type',
+  'category',
+  'topic',
+  'title',
+  'name',
 ]);
 
 /**
@@ -54,7 +136,7 @@ const INTENT_PARAMS = new Set([
 function looksLikeSecret(v: string): boolean {
   if (v.length < 24) return false;
   if (!/^[A-Za-z0-9_\-.=+/]+$/.test(v)) return false; // any space/punctuation => prose, not a token
-  if (/^\d+$/.test(v)) return false;                  // a long number is an id or timestamp
+  if (/^\d+$/.test(v)) return false; // a long number is an id or timestamp
   const classes = Number(/[a-z]/.test(v)) + Number(/[A-Z]/.test(v)) + Number(/\d/.test(v));
   return classes >= 2; // mixed alphabet is the signature of encoded bytes
 }
@@ -77,18 +159,41 @@ function looksLikeSecret(v: string): boolean {
  * layer 1 misses. That is why there are two.
  */
 const AUTH_SEGMENTS = new Set([
-  'signin', 'signup', 'login', 'logout', 'signout', 'auth', 'oauth2',
-  'authorize', 'authenticate', 'authorization',
-  'resetpassword', 'passwordreset', 'forgotpassword', 'changepassword', 'newpassword',
-  'verifyemail', 'confirmemail', 'emailverification', 'magiclink',
-  '2fa', 'mfa', 'twofactor', 'otp',
-  'checkout', 'payment', 'payments', 'billing', 'addcard',
+  'signin',
+  'signup',
+  'login',
+  'logout',
+  'signout',
+  'auth',
+  'oauth2',
+  'authorize',
+  'authenticate',
+  'authorization',
+  'resetpassword',
+  'passwordreset',
+  'forgotpassword',
+  'changepassword',
+  'newpassword',
+  'verifyemail',
+  'confirmemail',
+  'emailverification',
+  'magiclink',
+  '2fa',
+  'mfa',
+  'twofactor',
+  'otp',
+  'checkout',
+  'payment',
+  'payments',
+  'billing',
+  'addcard',
 ]);
 
 /** Segment -> comparable form: `sign-in` and `sign_in` both become `signin`. */
 const normSeg = (s: string): string => s.toLowerCase().replace(/[-_.]/g, '');
 
-const SENSITIVE_HOST = /^(accounts\.google\.com|login\.microsoftonline\.com|appleid\.apple\.com|signin\.aws\.amazon\.com|auth\d?\..+|login\..+|sso\..+)$/i;
+const SENSITIVE_HOST =
+  /^(accounts\.google\.com|login\.microsoftonline\.com|appleid\.apple\.com|signin\.aws\.amazon\.com|auth\d?\..+|login\..+|sso\..+)$/i;
 
 /**
  * True when this URL should not be recorded at all. The caller treats it exactly like an
@@ -98,7 +203,11 @@ const SENSITIVE_HOST = /^(accounts\.google\.com|login\.microsoftonline\.com|appl
 export function isSensitiveUrl(raw: string | null | undefined): boolean {
   if (!raw) return false;
   let u: URL;
-  try { u = new URL(raw); } catch { return false; }
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
   if (SENSITIVE_HOST.test(u.hostname)) return true;
   return u.pathname.split('/').some((seg) => seg && AUTH_SEGMENTS.has(normSeg(seg)));
 }
@@ -123,8 +232,8 @@ export function scrubText(s: string | null | undefined): string {
   return s
     .replace(/[\w.+-]+@[\w-]+\.[\w.]{2,}/g, '[email]')
     .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.?[A-Za-z0-9_-]*/g, '[token]') // JWT
-    .replace(/\b(?:\d[ -]?){13,19}\b/g, '[number]')                                   // card-shaped
-    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[token]')                                    // encoded blob
+    .replace(/\b(?:\d[ -]?){13,19}\b/g, '[number]') // card-shaped
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[token]') // encoded blob
     .replace(/\s{2,}/g, ' ')
     .trim();
 }
@@ -158,7 +267,7 @@ export function redactTextParams(s: string): string {
   return s.replace(
     /(?<=^|[?&\s/]|%26|%3F)([A-Za-z0-9_.-]{1,40})(=|%3D)([^&\s]*?)(?=&|%26|\s|$)/gi,
     (whole, name: string, eq: string, val: string) =>
-      (val && SECRET_PARAMS.has(name.toLowerCase()) ? `${name}${eq}REDACTED` : whole),
+      val && SECRET_PARAMS.has(name.toLowerCase()) ? `${name}${eq}REDACTED` : whole,
   );
 }
 
@@ -180,7 +289,7 @@ export function redactTextParams(s: string): string {
  */
 export function neutralize(s: string | null | undefined): string {
   return scrubText(redactTextParams(s || ''))
-    .replace(/[\r\n\t]+/g, ' ')       // one field, one line — no injecting extra prompt lines
+    .replace(/[\r\n\t]+/g, ' ') // one field, one line — no injecting extra prompt lines
     .replace(/[-=_*#`~]{3,}/g, '···') // can't forge a fence or open a code block
     .replace(/\s{2,}/g, ' ')
     .trim()
@@ -198,7 +307,11 @@ export function neutralize(s: string | null | undefined): string {
 export function redact(raw: string | null | undefined): string | null {
   if (!raw) return null;
   let u: URL;
-  try { u = new URL(raw); } catch { return raw; }
+  try {
+    u = new URL(raw);
+  } catch {
+    return raw;
+  }
   let touched = false;
   for (const [k, v] of [...u.searchParams.entries()]) {
     const lk = k.toLowerCase();

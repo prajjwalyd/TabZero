@@ -3,7 +3,15 @@ import { HOST, PORT, TOKEN, ENGRAM_ENABLED } from '../core/config.js';
 import { db, getUserId } from '../core/db.js';
 import { ingestEvent } from '../capture/pipeline.js';
 import {
-  listTrails, getTrailDetail, getTrail, resurrectUrls, searchTrails, weekInTabs, summarizeTrail, getInterests, deleteTrail,
+  listTrails,
+  getTrailDetail,
+  getTrail,
+  resurrectUrls,
+  searchTrails,
+  weekInTabs,
+  summarizeTrail,
+  getInterests,
+  deleteTrail,
 } from '../trails/trails.js';
 import { LLM_BACKEND } from '../core/llm.js';
 import { VERSION } from '../core/version.js';
@@ -42,8 +50,12 @@ function send(res: http.ServerResponse, code: number, body: unknown): void {
  * to the names we actually serve separates the two, and is the standard defense for a local daemon.
  */
 const ALLOWED_HOSTS = new Set([
-  `127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`,
-  '127.0.0.1', 'localhost', '[::1]',
+  `127.0.0.1:${PORT}`,
+  `localhost:${PORT}`,
+  `[::1]:${PORT}`,
+  '127.0.0.1',
+  'localhost',
+  '[::1]',
 ]);
 
 // An event batch is the only large body we accept; 4MB is far above a real one (40 events, capped
@@ -58,7 +70,12 @@ function readBody(req: http.IncomingMessage): Promise<BodyResult> {
     let data = '';
     let bytes = 0;
     let settled = false;
-    const finish = (r: BodyResult) => { if (!settled) { settled = true; resolve(r); } };
+    const finish = (r: BodyResult) => {
+      if (!settled) {
+        settled = true;
+        resolve(r);
+      }
+    };
     req.on('data', (c) => {
       // Once over the limit we keep draining but stop accumulating: memory is bounded either way, and
       // destroying the socket here would reset the connection before the 413 could flush, so the
@@ -75,7 +92,11 @@ function readBody(req: http.IncomingMessage): Promise<BodyResult> {
       if (!data) return finish({ ok: true, body: {} });
       // Malformed JSON is a 400, not a silently-empty object: quietly coercing it to `{}` made a
       // broken client look like an empty-but-valid request, which is indistinguishable from success.
-      try { finish({ ok: true, body: JSON.parse(data) }); } catch { finish({ ok: false, code: 400 }); }
+      try {
+        finish({ ok: true, body: JSON.parse(data) });
+      } catch {
+        finish({ ok: false, code: 400 });
+      }
     });
     req.on('error', () => finish({ ok: false, code: 400 }));
   });
@@ -130,7 +151,12 @@ export function startHttp(): http.Server {
         const events: TabEventInput[] = Array.isArray(r.body?.events) ? r.body.events.slice(0, 500) : [];
         let n = 0;
         for (const e of events) {
-          try { ingestEvent(e); n++; } catch (err) { console.error('[ingest]', (err as Error).message); }
+          try {
+            ingestEvent(e);
+            n++;
+          } catch (err) {
+            console.error('[ingest]', (err as Error).message);
+          }
         }
         if (n) noteActivity(); // kick the scheduler back to base cadence
         return send(res, 200, { ok: true, count: n });
@@ -194,7 +220,9 @@ export function startHttp(): http.Server {
   });
   server.on('error', (e: NodeJS.ErrnoException) => {
     if (e.code === 'EADDRINUSE') {
-      console.error(`\n  Port ${PORT} is already in use — Tab Zero is probably already running.\n  (Change it with TABZERO_PORT, or stop the other instance.)\n`);
+      console.error(
+        `\n  Port ${PORT} is already in use — Tab Zero is probably already running.\n  (Change it with TABZERO_PORT, or stop the other instance.)\n`,
+      );
     } else {
       console.error('[http]', e.message);
     }

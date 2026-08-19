@@ -46,7 +46,11 @@ test('the data dir and every DB file are created owner-only, even under a permis
     assert.equal(mode(dir), '0700', 'the data directory must not be traversable by others');
     for (const f of ['tabzero.db', 'tabzero.db-wal', 'tabzero.db-shm']) {
       const p = join(dir, f);
-      try { statSync(p); } catch { continue; } // -wal/-shm vanish on a clean close
+      try {
+        statSync(p);
+      } catch {
+        continue;
+      } // -wal/-shm vanish on a clean close
       assert.equal(mode(p), '0600', `${f} must be owner-only — it is (part of) the browsing history`);
     }
     assert.equal(mode(join(dir, 'token')), '0600', 'the auth token must be owner-only');
@@ -79,7 +83,12 @@ test('a plaintext ENGRAM_BASE is refused at boot rather than leaking the key ove
     // Every Engram request carries `Authorization: Bearer <key>` AND the page titles, so http:// would
     // put both in the clear. Failing loudly is the only safe behaviour.
     const bad = boot(
-      { TABZERO_DATA: dir, ENGRAM_API_KEY: 'eng_notarealkey', ENGRAM_BASE: 'http://api.engram.weaviate.io/v1', TABZERO_PORT: '8785' },
+      {
+        TABZERO_DATA: dir,
+        ENGRAM_API_KEY: 'eng_notarealkey',
+        ENGRAM_BASE: 'http://api.engram.weaviate.io/v1',
+        TABZERO_PORT: '8785',
+      },
       `await import(${SRC('core/config.ts')}); console.log('BOOTED');`,
     );
     assert.notEqual(bad.status, 0, 'plaintext base must abort the boot');
@@ -88,14 +97,24 @@ test('a plaintext ENGRAM_BASE is refused at boot rather than leaking the key ove
 
     // https is fine...
     const good = boot(
-      { TABZERO_DATA: dir, ENGRAM_API_KEY: 'eng_notarealkey', ENGRAM_BASE: 'https://api.engram.weaviate.io/v1', TABZERO_PORT: '8786' },
+      {
+        TABZERO_DATA: dir,
+        ENGRAM_API_KEY: 'eng_notarealkey',
+        ENGRAM_BASE: 'https://api.engram.weaviate.io/v1',
+        TABZERO_PORT: '8786',
+      },
       `await import(${SRC('core/config.ts')}); console.log('BOOTED');`,
     );
     assert.ok(/BOOTED/.test(good.stderr), `https must be accepted: ${good.stderr.slice(0, 200)}`);
 
     // ...and so is a loopback mock, which is the documented exception for local development.
     const loop = boot(
-      { TABZERO_DATA: dir, ENGRAM_API_KEY: 'eng_notarealkey', ENGRAM_BASE: 'http://127.0.0.1:9999/v1', TABZERO_PORT: '8788' },
+      {
+        TABZERO_DATA: dir,
+        ENGRAM_API_KEY: 'eng_notarealkey',
+        ENGRAM_BASE: 'http://127.0.0.1:9999/v1',
+        TABZERO_PORT: '8788',
+      },
       `await import(${SRC('core/config.ts')}); console.log('BOOTED');`,
     );
     assert.ok(/BOOTED/.test(loop.stderr), `loopback must stay usable: ${loop.stderr.slice(0, 200)}`);
@@ -132,7 +151,13 @@ test('a FRESH install gets the complete schema — there are no migrations to fa
       ].join('\n'),
     );
     assert.equal(r.status, 0, `a fresh install could not complete its own writes: ${r.stderr}`);
-    const row = JSON.parse(r.stderr.trim().split('\n').filter((l) => l.startsWith('{')).pop()!);
+    const row = JSON.parse(
+      r.stderr
+        .trim()
+        .split('\n')
+        .filter((l) => l.startsWith('{'))
+        .pop()!,
+    );
     assert.equal(row.summary_source, 'engram', 'summary_source must exist and round-trip');
     assert.equal(row.last_engram_push, 2, 'last_engram_push must exist and round-trip');
   } finally {
@@ -174,7 +199,13 @@ test('vestigial columns are dropped by repair, and never silently at boot', () =
       ].join('\n'),
     );
     assert.equal(afterBoot.status, 0, afterBoot.stderr);
-    const bootCols = JSON.parse(afterBoot.stderr.trim().split('\n').filter((l) => l.startsWith('[')).pop()!);
+    const bootCols = JSON.parse(
+      afterBoot.stderr
+        .trim()
+        .split('\n')
+        .filter((l) => l.startsWith('['))
+        .pop()!,
+    );
     assert.ok(bootCols.includes('status'), 'boot must not rewrite the table unprompted');
 
     // repair --apply is what removes them, and the row must survive.
@@ -188,7 +219,13 @@ test('vestigial columns are dropped by repair, and never silently at boot', () =
       ].join('\n'),
     );
     assert.equal(rep.status, 0, `repair failed: ${rep.stderr}`);
-    const { cols, row } = JSON.parse(rep.stderr.trim().split('\n').filter((l) => l.startsWith('{')).pop()!);
+    const { cols, row } = JSON.parse(
+      rep.stderr
+        .trim()
+        .split('\n')
+        .filter((l) => l.startsWith('{'))
+        .pop()!,
+    );
     assert.ok(!cols.includes('status'), `status survived repair: ${cols.join(',')}`);
     assert.ok(!cols.includes('liveness'), `liveness survived repair: ${cols.join(',')}`);
     assert.equal(row.id, 't_legacy', 'the row survived');

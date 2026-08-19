@@ -40,11 +40,19 @@ async function flush(): Promise<void> {
     if (!r.ok) throw new Error(`status ${r.status}`);
     // Delivered — drop the crash mirror. Leaving it behind let a later restore() re-adopt events
     // that had already been ingested, duplicating them.
-    try { await chrome.storage.local.remove('tz_queue'); } catch { /* ignore */ }
+    try {
+      await chrome.storage.local.remove('tz_queue');
+    } catch {
+      /* ignore */
+    }
   } catch {
     // daemon down — put the batch back and mirror it so nothing is lost across SW death
     queue = batch.concat(queue);
-    try { await chrome.storage.local.set({ tz_queue: queue.slice(-3000) }); } catch { /* ignore */ }
+    try {
+      await chrome.storage.local.set({ tz_queue: queue.slice(-3000) });
+    } catch {
+      /* ignore */
+    }
   } finally {
     flushing = false;
   }
@@ -68,19 +76,36 @@ async function restore(): Promise<void> {
     queue = tz_queue;
     await chrome.storage.local.remove('tz_queue');
     void flush();
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 // --- listeners registered synchronously at top level (so a dormant SW is woken) ---
 
 chrome.tabs.onCreated.addListener((tab) => {
   // establish the opener relationship; the page itself is captured on navigate
-  enqueue({ ts: Date.now(), type: 'open', tabId: tab.id ?? -1, openerTabId: tab.openerTabId ?? null, windowId: tab.windowId, url: null });
+  enqueue({
+    ts: Date.now(),
+    type: 'open',
+    tabId: tab.id ?? -1,
+    openerTabId: tab.openerTabId ?? null,
+    windowId: tab.windowId,
+    url: null,
+  });
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if ((changeInfo.status === 'complete' || changeInfo.title) && tab.url) {
-    enqueue({ ts: Date.now(), type: 'navigate', tabId, windowId: tab.windowId, url: tab.url, title: tab.title ?? null, favIconUrl: tab.favIconUrl ?? null });
+    enqueue({
+      ts: Date.now(),
+      type: 'navigate',
+      tabId,
+      windowId: tab.windowId,
+      url: tab.url,
+      title: tab.title ?? null,
+      favIconUrl: tab.favIconUrl ?? null,
+    });
   }
 });
 
@@ -99,11 +124,13 @@ async function doNuke(): Promise<{ closed: number; trails: number }> {
   try {
     const h = await (await fetch(`${BACKEND}/health`)).json(); // /health needs no auth
     trails = h?.trails ?? 0;
-  } catch { /* daemon down — still close the tabs */ }
+  } catch {
+    /* daemon down — still close the tabs */
+  }
 
   const tabs = await chrome.tabs.query({});
   const zeroUrl = chrome.runtime.getURL('zero.html');
-  const ids = tabs.filter((t) => t.id != null && !t.pinned && t.url !== zeroUrl).map((t) => t.id!) as number[];
+  const ids = tabs.filter((t) => t.id != null && !t.pinned && t.url !== zeroUrl).map((t) => t.id!);
   const closed = ids.length;
 
   // Snapshot the working set (the http(s) tabs open right now) so the server can checkpoint them,
@@ -119,29 +146,43 @@ async function doNuke(): Promise<{ closed: number; trails: number }> {
   const url = chrome.runtime.getURL(`zero.html?closed=${closed}&trails=${trails}`);
   const fresh = await chrome.tabs.create({ url, active: true });
   const toRemove = ids.filter((id) => id !== fresh.id);
-  try { await chrome.tabs.remove(toRemove); } catch { /* some may already be gone */ }
+  try {
+    await chrome.tabs.remove(toRemove);
+  } catch {
+    /* some may already be gone */
+  }
   return { closed, trails };
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === 'nuke') {
-    doNuke().then(sendResponse).catch(() => sendResponse({ closed: 0, trails: 0 }));
+    doNuke()
+      .then(sendResponse)
+      .catch(() => sendResponse({ closed: 0, trails: 0 }));
     return true; // async response
   }
   // Metadata-only enrichment forwarded from the content script.
   if (msg?.type === 'meta' && sender.tab?.id != null) {
     enqueue({
-      ts: Date.now(), type: 'meta', tabId: sender.tab.id, windowId: sender.tab.windowId,
-      url: msg.url ?? sender.tab.url ?? null, title: sender.tab.title ?? null,
-      description: msg.description ?? null, heading: msg.heading ?? null,
+      ts: Date.now(),
+      type: 'meta',
+      tabId: sender.tab.id,
+      windowId: sender.tab.windowId,
+      url: msg.url ?? sender.tab.url ?? null,
+      title: sender.tab.title ?? null,
+      description: msg.description ?? null,
+      heading: msg.heading ?? null,
     });
   }
   return undefined;
 });
 
-chrome.alarms.create('tz_flush', { periodInMinutes: 1 });
+void chrome.alarms.create('tz_flush', { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener((a) => {
-  if (a.name === 'tz_flush') { void restore(); void flush(); }
+  if (a.name === 'tz_flush') {
+    void restore();
+    void flush();
+  }
 });
 chrome.runtime.onStartup.addListener(() => void restore());
 chrome.runtime.onInstalled.addListener(() => void restore());

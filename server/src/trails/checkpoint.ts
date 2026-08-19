@@ -33,8 +33,8 @@ export async function zeroCheckpoint(openUrls: string[]): Promise<ZeroResult> {
     const c = canonicalize(raw);
     if (!c || seen.has(c.canonical)) continue;
     seen.add(c.canonical);
-    const p = db.prepare('SELECT trail_id FROM pages WHERE canonical_url = ?')
-      .get(c.canonical) as { trail_id: string | null } | undefined;
+    const p = db.prepare('SELECT trail_id FROM pages WHERE canonical_url = ?').get(c.canonical) as
+      { trail_id: string | null } | undefined;
     rows.push({ canonical: c.canonical, trailId: p?.trail_id ?? null });
   }
 
@@ -42,7 +42,9 @@ export async function zeroCheckpoint(openUrls: string[]): Promise<ZeroResult> {
   if (rows.length) {
     const info = db.prepare('INSERT INTO checkpoints (ts, closed_count) VALUES (?, ?)').run(now, rows.length);
     checkpointId = Number(info.lastInsertRowid);
-    const ins = db.prepare('INSERT INTO checkpoint_pages (checkpoint_id, canonical_url, trail_id) VALUES (?, ?, ?)');
+    const ins = db.prepare(
+      'INSERT INTO checkpoint_pages (checkpoint_id, canonical_url, trail_id) VALUES (?, ?, ?)',
+    );
     for (const r of rows) ins.run(checkpointId, r.canonical, r.trailId);
   }
 
@@ -64,8 +66,11 @@ export async function zeroCheckpoint(openUrls: string[]): Promise<ZeroResult> {
   // 4. Force-push everything stale to Engram right now (explicit intent bypasses the re-push guard).
   const { pushed } = await flushEngram({ force: true, limit: 50 });
 
-  const trailCount = (db.prepare('SELECT COUNT(*) c FROM trails WHERE page_count >= ?')
-    .get(cfg.MIN_TRAIL_PAGES) as { c: number }).c;
+  const trailCount = (
+    db.prepare('SELECT COUNT(*) c FROM trails WHERE page_count >= ?').get(cfg.MIN_TRAIL_PAGES) as {
+      c: number;
+    }
+  ).c;
 
   return {
     ok: true,

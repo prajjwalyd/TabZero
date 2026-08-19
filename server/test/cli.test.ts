@@ -68,7 +68,13 @@ function run(args: string[], extraEnv: Record<string, string> = {}) {
 }
 
 beforeEach(freshTree);
-after(() => { try { rmSync(root, { recursive: true, force: true }); } catch { /* ignore */ } });
+after(() => {
+  try {
+    rmSync(root, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+});
 
 // ---- uninstall ----
 
@@ -78,8 +84,11 @@ test('uninstall --purge --yes removes the staged extension, the data, and the gl
   assert.equal(r.status, 0, `uninstall failed: ${r.out}`);
   assert.ok(!existsSync(p.extDest), 'the staged extension folder must be gone');
   assert.ok(!existsSync(p.data), 'the data directory must be gone when consent was given');
-  assert.match(readFileSync(p.npmLog, 'utf8'), /npm (unlink|rm -g tabzero)/,
-    'it must try to drop the global command');
+  assert.match(
+    readFileSync(p.npmLog, 'utf8'),
+    /npm (unlink|rm -g tabzero)/,
+    'it must try to drop the global command',
+  );
 });
 
 test('a plain uninstall KEEPS the data — no prompt, nothing lost', () => {
@@ -87,8 +96,11 @@ test('a plain uninstall KEEPS the data — no prompt, nothing lost', () => {
   // keystroke. Deletion now requires the explicitly named --purge; a plain uninstall does not even ask.
   const p = paths();
   const r = run(['uninstall']);
-  assert.match(r.out, /Kept all your data|picks up exactly where/i,
-    `a plain uninstall should say the data was kept: ${r.out.trim().slice(0, 200)}`);
+  assert.match(
+    r.out,
+    /Kept all your data|picks up exactly where/i,
+    `a plain uninstall should say the data was kept: ${r.out.trim().slice(0, 200)}`,
+  );
   assert.ok(existsSync(p.data), 'data must survive an unconfirmed uninstall');
   assert.ok(existsSync(join(p.data, 'token')), 'and specifically the token file');
   // The staged extension is documented as unconditional — it is a copy, not user data.
@@ -107,7 +119,6 @@ test('uninstall --purge without --yes still fails safe on a non-interactive run'
 test('uninstall touches nothing outside the redirected HOME / data dir', () => {
   // Guards the isolation itself: if EXT_DEST ever stops deriving from homedir(), this test would start
   // deleting the real one and we want to know from a failure here, not from lost data.
-  const p = paths();
   const decoy = join(root, 'decoy');
   mkdirSync(decoy, { recursive: true });
   writeFileSync(join(decoy, 'keep.txt'), 'untouched');
@@ -167,7 +178,9 @@ async function withDaemon(fn: (env: Record<string, string>) => Promise<void> | v
       try {
         const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(400) });
         up = res.ok;
-      } catch { /* not up yet */ }
+      } catch {
+        /* not up yet */
+      }
       if (!up) await new Promise((r) => setTimeout(r, 150));
     }
     assert.ok(up, 'the daemon did not come up');
@@ -183,7 +196,10 @@ test('the query commands emit parseable JSON under --json', async () => {
     // contract an agent parses, so the test asserts what the command actually prints.
     const trails = run(['trails', '--json'], env);
     assert.equal(trails.status, 0, `trails --json failed: ${trails.out}`);
-    assert.ok(Array.isArray(JSON.parse(trails.out)), `trails --json must be a bare array, got ${trails.out.slice(0, 60)}`);
+    assert.ok(
+      Array.isArray(JSON.parse(trails.out)),
+      `trails --json must be a bare array, got ${trails.out.slice(0, 60)}`,
+    );
 
     const week = run(['week', '--json'], env);
     assert.equal(week.status, 0, week.out);
@@ -219,16 +235,24 @@ test('uninstall then reinstall resumes from the same database and the same ident
   await withDaemon(async (env) => {
     const port = env.TABZERO_PORT;
     const token = readFileSync(join(p.data, 'token'), 'utf8').trim();
-    const ev = (url: string, title: string, ts: number) =>
-      ({ ts, type: 'navigate', tabId: 1, windowId: 1, url, title });
+    const ev = (url: string, title: string, ts: number) => ({
+      ts,
+      type: 'navigate',
+      tabId: 1,
+      windowId: 1,
+      url,
+      title,
+    });
     const now = Date.now();
     await fetch(`http://127.0.0.1:${port}/events`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-tabzero-token': token },
-      body: JSON.stringify({ events: [
-        ev('https://kiln.example.com/glazes/celadon', 'Celadon Glaze Recipes', now),
-        ev('https://kiln.example.com/glazes/tenmoku', 'Tenmoku Glaze Chemistry', now + 1000),
-      ] }),
+      body: JSON.stringify({
+        events: [
+          ev('https://kiln.example.com/glazes/celadon', 'Celadon Glaze Recipes', now),
+          ev('https://kiln.example.com/glazes/tenmoku', 'Tenmoku Glaze Chemistry', now + 1000),
+        ],
+      }),
     });
     const h = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
     before = { trails: h.trails, pages: h.pages, userId: h.userId, token };
@@ -248,8 +272,61 @@ test('uninstall then reinstall resumes from the same database and the same ident
     assert.equal(h.pages, before.pages, 'every page came back');
     assert.equal(h.trails, before.trails, 'every trail came back');
     assert.equal(h.userId, before.userId, 'same user id => the same Engram memories still match');
-    assert.equal(readFileSync(join(p.data, 'token'), 'utf8').trim(), before.token,
-      'same token => the extension re-authenticates without the user doing anything');
+    assert.equal(
+      readFileSync(join(p.data, 'token'), 'utf8').trim(),
+      before.token,
+      'same token => the extension re-authenticates without the user doing anything',
+    );
     assert.equal(typeof h.version, 'string', '/health reports a version so skew is detectable');
   });
+});
+
+// ---- global install diagnosis ----
+//
+// The wizard's old failure message was three wrong things at once: it said "Skipped the global install"
+// after the user said yes, it blamed permissions without having read npm's output (`stdio: 'ignore'`),
+// and its remedy was the command that had just failed. These pin the replacement against real npm
+// output — captured verbatim from `npm i -g github:prajjwalyd/TabZero` on a machine that had previously
+// run `npm link`, which is the failure everyone who developed from a clone will hit.
+const { explainGlobalFailure } = await import('../src/core/npm-error.js');
+const CMD = 'npm i -g github:prajjwalyd/TabZero';
+
+const NPM_ENOTDIR = `npm error code 236
+npm error git dep preparation failed
+npm error command /Users/x/.nvm/versions/node/v24.16.0/bin/node /usr/lib/npm/bin/npm-cli.js install --force
+npm error npm warn using --force Recommended protections disabled.
+npm error npm error code ENOTDIR
+npm error npm error syscall rename
+npm error npm error path /Users/x/.nvm/versions/node/v24.16.0/lib/node_modules/tabzero
+npm error npm error dest /Users/x/.nvm/versions/node/v24.16.0/lib/node_modules/.tabzero-Kb4xmFD7
+npm error npm error ENOTDIR: not a directory, rename '/Users/x/lib/node_modules/tabzero' -> '/Users/x/lib/node_modules/.tabzero-Kb4xmFD7'
+npm error A complete log of this run can be found in: /Users/x/.npm/_logs/x-debug-0.log`;
+
+test('a leftover `npm link` is named as the cause, and the fix removes it first', () => {
+  const r = explainGlobalFailure(NPM_ENOTDIR, CMD);
+  assert.match(r.reason, /link/i, `must name the link, not guess: ${r.reason}`);
+  assert.doesNotMatch(r.reason, /permission/i, 'ENOTDIR has nothing to do with permissions');
+  assert.equal(
+    r.fix[0],
+    'npm rm -g tabzero',
+    'the first step must clear the link — retrying the same command fails the same way',
+  );
+  assert.ok(r.fix.includes(CMD), 'and then retry the install');
+});
+
+test('an unwritable global folder is the one case that does suggest sudo', () => {
+  const r = explainGlobalFailure('npm error code EACCES\nnpm error Error: EACCES: permission denied', CMD);
+  assert.match(r.reason, /not writable/i);
+  assert.equal(r.fix[0], `sudo ${CMD}`);
+});
+
+test('an unrecognised failure quotes npm instead of inventing a cause', () => {
+  const r = explainGlobalFailure(
+    'npm error code ENOTFOUND\nnpm error command failed\nnpm error request to https://registry.npmjs.org failed, reason: getaddrinfo ENOTFOUND',
+    CMD,
+  );
+  assert.doesNotMatch(r.reason, /permission/i, 'a network failure must not be reported as permissions');
+  assert.match(r.reason, /ENOTFOUND/, `must carry npm's own words: ${r.reason}`);
+  // Bookkeeping lines are not a diagnosis.
+  assert.doesNotMatch(r.reason, /^npm reported: (code|command|A complete log)/);
 });

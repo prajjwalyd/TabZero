@@ -30,9 +30,17 @@ const nav = (tabId: number, url: string, title: string, ts: number, openerTabId?
   ingestEvent({ ts, type: 'navigate', tabId, windowId: 1, url, title, openerTabId });
 
 const trailOf = (canonical: string): string | null =>
-  (db.prepare('SELECT trail_id FROM pages WHERE canonical_url = ?').get(canonical) as { trail_id: string | null }).trail_id;
+  (
+    db.prepare('SELECT trail_id FROM pages WHERE canonical_url = ?').get(canonical) as {
+      trail_id: string | null;
+    }
+  ).trail_id;
 const visitsOf = (canonical: string): number =>
-  (db.prepare('SELECT visit_count FROM pages WHERE canonical_url = ?').get(canonical) as { visit_count: number }).visit_count;
+  (
+    db.prepare('SELECT visit_count FROM pages WHERE canonical_url = ?').get(canonical) as {
+      visit_count: number;
+    }
+  ).visit_count;
 
 /**
  * The two assignment signals, isolated so each assertion can only pass for the right reason.
@@ -51,22 +59,43 @@ test('clustering: opener graph and lexical similarity each join a page, unrelate
   nav(11, 'https://postgresql.org/docs/current/indexes-btree', 'BTree Index Internals', T0 + 60_000);
 
   // Link-opened from tab 11, and textually unrelated (cosine 0.0000) — only the opener graph can join it.
-  nav(12, 'https://blog.example.org/2026/why-we-rewrote-our-scheduler-in-rust', 'Why We Rewrote Our Scheduler In Rust', T0 + 120_000, 11);
+  nav(
+    12,
+    'https://blog.example.org/2026/why-we-rewrote-our-scheduler-in-rust',
+    'Why We Rewrote Our Scheduler In Rust',
+    T0 + 120_000,
+    11,
+  );
 
   // No opener, but overlapping vocabulary — must join on similarity alone.
   nav(13, 'https://postgresql.org/docs/current/indexes-expressional', 'Expression Index Types', T0 + 180_000);
 
   // The control: same cosine 0.0000 as the Rust post, but no opener — must NOT be swept in.
-  nav(14, 'https://allrecipes.com/recipe/sourdough-starter', 'Sourdough Starter Feeding Schedule', T0 + 240_000);
+  nav(
+    14,
+    'https://allrecipes.com/recipe/sourdough-starter',
+    'Sourdough Starter Feeding Schedule',
+    T0 + 240_000,
+  );
 
   const trail = trailOf('https://postgresql.org/docs/current/indexes-types');
   assert.ok(trail, 'first page should own a trail');
   assert.equal(trailOf('https://postgresql.org/docs/current/indexes-btree'), trail, 'same-site sibling');
-  assert.equal(trailOf('https://blog.example.org/2026/why-we-rewrote-our-scheduler-in-rust'), trail,
-    'a link-opened tab must follow its opener even with zero lexical overlap');
-  assert.equal(trailOf('https://postgresql.org/docs/current/indexes-expressional'), trail, 'lexical similarity should join');
-  assert.notEqual(trailOf('https://allrecipes.com/recipe/sourdough-starter'), trail,
-    'same zero similarity, no opener — must start its own trail');
+  assert.equal(
+    trailOf('https://blog.example.org/2026/why-we-rewrote-our-scheduler-in-rust'),
+    trail,
+    'a link-opened tab must follow its opener even with zero lexical overlap',
+  );
+  assert.equal(
+    trailOf('https://postgresql.org/docs/current/indexes-expressional'),
+    trail,
+    'lexical similarity should join',
+  );
+  assert.notEqual(
+    trailOf('https://allrecipes.com/recipe/sourdough-starter'),
+    trail,
+    'same zero similarity, no opener — must start its own trail',
+  );
 
   const t = db.prepare('SELECT page_count FROM trails WHERE id = ?').get(trail) as { page_count: number };
   assert.equal(t.page_count, 4, 'trail should hold exactly the four related pages');
@@ -86,7 +115,15 @@ test('a re-delivered batch cannot inflate visit_count (regression: one real visi
     ingestEvent({ ts: T0, type: 'open', tabId, windowId: 2 });
     ingestEvent({ ts: T0, type: 'activate', tabId, windowId: 2 });
     nav(tabId, url, 'Account profile', T0 + 1);
-    ingestEvent({ ts: T0 + 2, type: 'meta', tabId, windowId: 2, url, title: 'Account profile', description: null });
+    ingestEvent({
+      ts: T0 + 2,
+      type: 'meta',
+      tabId,
+      windowId: 2,
+      url,
+      title: 'Account profile',
+      description: null,
+    });
     nav(tabId, url, 'Account profile', T0 + 3);
     ingestEvent({ ts: T0 + 7000, type: 'close', tabId, windowId: 2 });
   };
@@ -115,15 +152,28 @@ test('a trail active AFTER an incoming page gets no recency bonus (no backwards 
   // capture entirely. Measured cosine against the astronomy page below is 0.1826 — identical to the
   // original — so the +0.15 bonus is still exactly what decides the merge, which is the whole point.
   nav(700, 'https://accounts.example.com/v3/profile/identifier?continue=z', 'Account profile', T0 + 500_000);
-  nav(700, 'https://accounts.example.com/v3/profile/identifier?continue=z', 'Account profile', T0 + 86_400_000);
+  nav(
+    700,
+    'https://accounts.example.com/v3/profile/identifier?continue=z',
+    'Account profile',
+    T0 + 86_400_000,
+  );
   const other = trailOf('https://accounts.example.com/v3/profile/identifier?continue=z');
 
   // Older than that trail's last_active, and sharing exactly one incidental token with it ("example"
   // from the domain). Vocabulary is kept disjoint from every other fixture in this file so the
   // assertion can only fail for the reason under test.
-  nav(701, 'https://astronomy.example.com/telescopes/collimation-guide', 'Collimation Guide For Newtonian Telescopes', T0 + 400_000);
-  assert.notEqual(trailOf('https://astronomy.example.com/telescopes/collimation-guide'), other,
-    'a weak lexical match must not be promoted by a bonus the trail did not earn');
+  nav(
+    701,
+    'https://astronomy.example.com/telescopes/collimation-guide',
+    'Collimation Guide For Newtonian Telescopes',
+    T0 + 400_000,
+  );
+  assert.notEqual(
+    trailOf('https://astronomy.example.com/telescopes/collimation-guide'),
+    other,
+    'a weak lexical match must not be promoted by a bonus the trail did not earn',
+  );
 });
 
 test('resurrection prefers the checkpoint working set over the full trail history', () => {
@@ -139,8 +189,13 @@ test('resurrection prefers the checkpoint working set over the full trail histor
   assert.equal(trailOf(c), trail, 'all three should share one trail');
 
   // Record a checkpoint holding only a and c — the tabs actually open together.
-  const cp = Number(db.prepare('INSERT INTO checkpoints (ts, closed_count) VALUES (?, ?)').run(T0 + 30_000, 2).lastInsertRowid);
-  const ins = db.prepare('INSERT INTO checkpoint_pages (checkpoint_id, canonical_url, trail_id) VALUES (?, ?, ?)');
+  const cp = Number(
+    db.prepare('INSERT INTO checkpoints (ts, closed_count) VALUES (?, ?)').run(T0 + 30_000, 2)
+      .lastInsertRowid,
+  );
+  const ins = db.prepare(
+    'INSERT INTO checkpoint_pages (checkpoint_id, canonical_url, trail_id) VALUES (?, ?, ?)',
+  );
   ins.run(cp, a, trail);
   ins.run(cp, c, trail);
 
@@ -186,7 +241,10 @@ const urlIn = (id: string, slug: string) => `https://${id}.example.com/${slug}`;
 // applied by the caller's `slice(0, n)` kept the OLDEST n and dropped everything current.
 test('an uncheckpointed trail reopens a capped, most-recent slice — not its whole history', () => {
   const n = MAX + 6;
-  seedTrail('tcap', Array.from({ length: n }, (_, i) => ({ slug: `p${i}`, ts: T0 + i * 1000, dwellMs: 60_000 })));
+  seedTrail(
+    'tcap',
+    Array.from({ length: n }, (_, i) => ({ slug: `p${i}`, ts: T0 + i * 1000, dwellMs: 60_000 })),
+  );
 
   const urls = resurrectUrls('tcap');
   assert.equal(urls.length, MAX, `must not hand back all ${n} pages`);
@@ -200,13 +258,20 @@ test('an uncheckpointed trail reopens a capped, most-recent slice — not its wh
 
 // Recency alone would let a run of one-second bounces evict the page you actually sat and read.
 test('under the cap, a page you actually read outranks a newer bounce', () => {
-  const read = { slug: 'read', ts: T0, dwellMs: 120_000 };            // oldest, but two minutes of dwell
-  const bounces = Array.from({ length: MAX }, (_, i) => ({ slug: `bounce${i}`, ts: T0 + (i + 1) * 1000, dwellMs: 900 }));
+  const read = { slug: 'read', ts: T0, dwellMs: 120_000 }; // oldest, but two minutes of dwell
+  const bounces = Array.from({ length: MAX }, (_, i) => ({
+    slug: `bounce${i}`,
+    ts: T0 + (i + 1) * 1000,
+    dwellMs: 900,
+  }));
   seedTrail('tbounce', [read, ...bounces]);
 
   const urls = resurrectUrls('tbounce');
   assert.equal(urls.length, MAX);
-  assert.ok(urls.includes(urlIn('tbounce', 'read')), 'the page actually read keeps its seat despite being oldest');
+  assert.ok(
+    urls.includes(urlIn('tbounce', 'read')),
+    'the page actually read keeps its seat despite being oldest',
+  );
   assert.ok(!urls.includes(urlIn('tbounce', 'bounce0')), 'the oldest bounce is what the cap sheds');
 });
 
@@ -219,14 +284,21 @@ test('under the cap, a page you actually read outranks a newer bounce', () => {
  * endpoint returns.
  */
 test('trail detail carries the reopen set, narrowed — not just the full page history', async () => {
-  seedTrail('tdetail', Array.from({ length: MAX + 4 }, (_, i) => ({ slug: `p${i}`, ts: T0 + i * 1000, dwellMs: 60_000 })));
+  seedTrail(
+    'tdetail',
+    Array.from({ length: MAX + 4 }, (_, i) => ({ slug: `p${i}`, ts: T0 + i * 1000, dwellMs: 60_000 })),
+  );
 
   const d = await getTrailDetail('tdetail');
   assert.ok(d, 'detail should resolve');
-  assert.deepEqual(d!.resurrectUrls, resurrectUrls('tdetail'), 'detail must expose exactly what a resurrect would reopen');
-  assert.equal(d!.resurrectUrls.length, MAX);
+  assert.deepEqual(
+    d.resurrectUrls,
+    resurrectUrls('tdetail'),
+    'detail must expose exactly what a resurrect would reopen',
+  );
+  assert.equal(d.resurrectUrls.length, MAX);
   assert.ok(
-    d!.pages.length > d!.resurrectUrls.length,
+    d.pages.length > d.resurrectUrls.length,
     '`pages` is the wider display history: a client that reopens it bypasses the checkpoint logic and the cap',
   );
 });
@@ -247,10 +319,15 @@ test('deleting a trail removes its pages, its events, and its checkpoint members
   // legitimately cluster into an existing trail (an earlier version of this test used `drysuit-sizing`,
   // which joined the vanlife trail via `sizing` + `example`). What is under test is that delete removes
   // exactly what the trail holds — so read that first and assert against it.
-  const pagesBefore = (db.prepare('SELECT COUNT(*) c FROM pages WHERE trail_id = ?').get(id) as { c: number }).c;
-  const eventsBefore = (db.prepare(
-    'SELECT COUNT(*) c FROM events WHERE canonical_url IN (SELECT canonical_url FROM pages WHERE trail_id = ?)',
-  ).get(id) as { c: number }).c;
+  const pagesBefore = (db.prepare('SELECT COUNT(*) c FROM pages WHERE trail_id = ?').get(id) as { c: number })
+    .c;
+  const eventsBefore = (
+    db
+      .prepare(
+        'SELECT COUNT(*) c FROM events WHERE canonical_url IN (SELECT canonical_url FROM pages WHERE trail_id = ?)',
+      )
+      .get(id) as { c: number }
+  ).c;
   assert.ok(pagesBefore >= 2, 'the fixture pages landed in one trail');
   assert.ok(eventsBefore > 0, 'its events are in the log to begin with');
 
@@ -264,7 +341,8 @@ test('deleting a trail removes its pages, its events, and its checkpoint members
   assert.equal(gone('SELECT COUNT(*) c FROM checkpoint_pages WHERE trail_id = ?'), 0, 'checkpoint rows gone');
   // The urls must be unreachable from the log too, or a replay rebuilds the trail.
   assert.equal(
-    (db.prepare('SELECT COUNT(*) c FROM events WHERE canonical_url = ?').get(a) as { c: number }).c, 0,
+    (db.prepare('SELECT COUNT(*) c FROM events WHERE canonical_url = ?').get(a) as { c: number }).c,
+    0,
     'no event still references the deleted page',
   );
   assert.equal(deleteTrail(id), null, 'deleting an already-deleted trail is a clean miss, not a throw');

@@ -1,0 +1,9 @@
+// Exists so ESLint's type-aware rules can resolve the test files; nothing emits from here.
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": ["."]
+}

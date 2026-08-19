@@ -8,12 +8,20 @@
 // only the raw log. (Previously we pushed a pre-baked local summary, which reduced Engram to a
 // vector-search box — reconciliation had nothing to reconcile.)
 
-import { ENGRAM_API_KEY, ENGRAM_BASE, ENGRAM_ENABLED, ENGRAM_TIMEOUT_MS, TRAIL_TOPIC, INTEREST_TOPIC, DEBUG } from '../core/config.js';
+import {
+  ENGRAM_API_KEY,
+  ENGRAM_BASE,
+  ENGRAM_ENABLED,
+  ENGRAM_TIMEOUT_MS,
+  TRAIL_TOPIC,
+  INTEREST_TOPIC,
+  DEBUG,
+} from '../core/config.js';
 
 interface PostResult {
   ok: boolean;
   status: number; // HTTP status, or 0 if the request never completed (timeout / network)
-  json: any | null;
+  json: any;
   errorText: string; // raw error body / message on failure, '' on success
 }
 
@@ -34,14 +42,19 @@ async function post(path: string, body: unknown): Promise<PostResult> {
     });
     const text = await r.text();
     let json: any = null;
-    try { json = text ? JSON.parse(text) : null; } catch { /* non-JSON */ }
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      /* non-JSON */
+    }
     if (!r.ok) {
       console.error(`[engram] POST ${path} -> ${r.status} ${text.slice(0, 240)}`);
       return { ok: false, status: r.status, json, errorText: text };
     }
     return { ok: true, status: r.status, json, errorText: '' };
   } catch (e) {
-    const msg = (e as Error).name === 'AbortError' ? `timed out after ${ENGRAM_TIMEOUT_MS}ms` : (e as Error).message;
+    const msg =
+      (e as Error).name === 'AbortError' ? `timed out after ${ENGRAM_TIMEOUT_MS}ms` : (e as Error).message;
     console.error(`[engram] POST ${path} failed: ${msg}`);
     return miss(msg);
   } finally {
@@ -64,7 +77,10 @@ export async function engramUpsertTrail(
 ): Promise<string | null> {
   // Verified schema: input is a discriminated object; `string.content` is an array of strings.
   // No `topic` field — routing happens via the trail_id scope property (+ any user-scoped topics).
-  const content = contents.map((s) => s.trim()).filter(Boolean).slice(0, 40);
+  const content = contents
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 40);
   if (!content.length) return null;
   const res = await post('/memories', {
     user_id: userId,
@@ -113,7 +129,11 @@ export async function engramSearch(userId: string, query: string): Promise<Engra
  * evolved across sessions. Null when Engram is off or the extraction hasn't landed yet (async
  * pipeline), so callers fall back to a local recap until it does.
  */
-export async function engramTrailMemory(userId: string, trailId: string, hint: string): Promise<string | null> {
+export async function engramTrailMemory(
+  userId: string,
+  trailId: string,
+  hint: string,
+): Promise<string | null> {
   if (!ENGRAM_ENABLED) return null;
   const hits = await engramSearch(userId, hint || 'summary');
   // Only trust a memory scoped to THIS trail. We deliberately do NOT fall back to another trail's
@@ -126,13 +146,19 @@ export async function engramTrailMemory(userId: string, trailId: string, hint: s
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   const best = scoped[0];
   if (DEBUG) {
-    console.error(`[engram] trailMemory("${hint}") id=${trailId}: ${hits.length} hit(s), ${scoped.length} id-scoped -> ${best ? 'using own memory' : 'none yet (local recap)'}`);
+    console.error(
+      `[engram] trailMemory("${hint}") id=${trailId}: ${hits.length} hit(s), ${scoped.length} id-scoped -> ${best ? 'using own memory' : 'none yet (local recap)'}`,
+    );
   }
   const content = best?.content?.trim();
   return content && content.length > 24 ? content : null;
 }
 
-export interface Interest { content: string; score: number | null; updatedAt: number | null }
+export interface Interest {
+  content: string;
+  score: number | null;
+  updatedAt: number | null;
+}
 
 /**
  * The interests Engram has synthesized on the ResearchInterest topic. Its own topic description
@@ -155,7 +181,7 @@ export interface Interest { content: string; score: number | null; updatedAt: nu
  * nothing against the free-tier budget, and they run in parallel so they cost no extra latency either.
  */
 const INTEREST_PROBES = [
-  'the user\'s main ongoing interests, themes, and projects',
+  "the user's main ongoing interests, themes, and projects",
   'what the user is currently evaluating, comparing, or deciding between',
   'what the user is learning, building, or investigating',
   'recurring topics and themes the user returns to across many sessions',

@@ -17,12 +17,17 @@ function findRepoRoot(start: string): string | null {
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
-// In the repo (dev): root is the repo, data sits in <repo>/.tabzero.
-// Installed/packaged (npx, global): no repo marker exists, so data lives in ~/.tabzero and persists
-// across npm-cache eviction.
-const repoRoot =
-  process.env.TABZERO_ROOT ||
-  (existsSync(join(process.cwd(), 'tsconfig.base.json')) ? process.cwd() : findRepoRoot(here));
+// In the repo (dev): the root is the repo THIS FILE lives in, and data sits in <repo>/.tabzero.
+// Installed/packaged (npx, global): no repo marker above this file, so data lives in ~/.tabzero and
+// persists across npm-cache eviction.
+//
+// Deliberately not keyed on process.cwd(), which it used to be as well. An installed copy run from
+// inside a clone — `npx github:prajjwalyd/TabZero` in your checkout, which is exactly how you'd try it
+// — then adopted that clone's database and .env, while the same `tabzero` run from anywhere else used
+// ~/.tabzero: one install silently reading two different histories, one of them empty, with no way to
+// tell which. Where the code lives is the only answer that doesn't move under you. TABZERO_ROOT still
+// overrides it, which is how the tests get a private root.
+const repoRoot = process.env.TABZERO_ROOT || findRepoRoot(here);
 
 /** Minimal .env loader — does not override values already in the environment. */
 function loadEnv(p: string): void {
@@ -52,7 +57,11 @@ mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
  * every start, and never throw — a permission we cannot set is not a reason to fail to boot.
  */
 export function hardenPath(p: string): void {
-  try { if (existsSync(p)) chmodSync(p, statSync(p).isDirectory() ? 0o700 : 0o600); } catch { /* best effort */ }
+  try {
+    if (existsSync(p)) chmodSync(p, statSync(p).isDirectory() ? 0o700 : 0o600);
+  } catch {
+    /* best effort */
+  }
 }
 hardenPath(DATA_DIR);
 
@@ -109,12 +118,20 @@ export const ENGRAM_API_KEY = process.env.ENGRAM_API_KEY || '';
 function requireSecureBase(base: string): string {
   if (!ENGRAM_API_KEY) return base; // Engram off — nothing is sent, nothing to protect
   let u: URL;
-  try { u = new URL(base); } catch { throw new Error(`ENGRAM_BASE is not a valid URL: ${base}`); }
-  const loopback = u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]' || u.hostname === '::1';
+  try {
+    u = new URL(base);
+  } catch {
+    throw new Error(`ENGRAM_BASE is not a valid URL: ${base}`);
+  }
+  const loopback =
+    u.hostname === '127.0.0.1' ||
+    u.hostname === 'localhost' ||
+    u.hostname === '[::1]' ||
+    u.hostname === '::1';
   if (u.protocol !== 'https:' && !loopback) {
     throw new Error(
-      `ENGRAM_BASE must use https:// (got ${u.protocol}//${u.hostname}). Every Engram request carries `
-      + 'your API key and your page titles; plaintext would expose both. Loopback is the only exception.',
+      `ENGRAM_BASE must use https:// (got ${u.protocol}//${u.hostname}). Every Engram request carries ` +
+        'your API key and your page titles; plaintext would expose both. Loopback is the only exception.',
     );
   }
   return base;
@@ -152,9 +169,9 @@ export const ARCHIVE_AFTER_DAYS = 30;
 // Engram is off or hasn't extracted yet: a trail stands in for an interest if it recurs across
 // sessions or is a deep investigation, and is still recent. There is deliberately no dwell-only
 // branch — a long single sitting is an absorbing afternoon, not a durable interest.
-export const INTEREST_MIN_SESSIONS = 2;                 // recurring: returned across >=2 sessions
-export const INTEREST_DEEP_PAGES = 8;                   // deep: a big single-trail rabbit hole
-export const INTEREST_MIN_LIVENESS = 0.5;               // recency floor — stale obsessions drop off
+export const INTEREST_MIN_SESSIONS = 2; // recurring: returned across >=2 sessions
+export const INTEREST_DEEP_PAGES = 8; // deep: a big single-trail rabbit hole
+export const INTEREST_MIN_LIVENESS = 0.5; // recency floor — stale obsessions drop off
 
 // Categories are a *growable* vocabulary: seeded from the fixed taxonomy, the LLM reuses an existing
 // one where it can and mints a new key only when nothing fits. This is the saturation backstop — a

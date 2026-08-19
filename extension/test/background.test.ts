@@ -13,25 +13,30 @@ import assert from 'node:assert/strict';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // --- the fake browser ---
-const listeners: Record<string, Function[]> = {};
-const addTo = (k: string) => ({ addListener: (f: Function) => (listeners[k] ??= []).push(f) });
+type Listener = (...args: any[]) => unknown;
+const listeners: Record<string, Listener[]> = {};
+const addTo = (k: string) => ({ addListener: (f: Listener) => (listeners[k] ??= []).push(f) });
 const fire = async (k: string, ...args: unknown[]) => {
   for (const f of listeners[k] ?? []) await f(...args);
 };
 
 let storage: Record<string, unknown> = {};
-let delivered: any[] = [];        // events the daemon actually received
+let delivered: any[] = []; // events the daemon actually received
 let healthCalls = 0;
-let failFlushes = 0;              // how many /events posts to reject
-let tokenFromHealth: string | null = 'tok-abc123';
+let failFlushes = 0; // how many /events posts to reject
+const tokenFromHealth: string | null = 'tok-abc123';
 
 before(async () => {
   (globalThis as any).chrome = {
     storage: {
       local: {
         get: async (k: string) => ({ [k]: storage[k] }),
-        set: async (o: Record<string, unknown>) => { Object.assign(storage, o); },
-        remove: async (k: string) => { delete storage[k]; },
+        set: async (o: Record<string, unknown>) => {
+          Object.assign(storage, o);
+        },
+        remove: async (k: string) => {
+          delete storage[k];
+        },
       },
     },
     tabs: {
@@ -55,10 +60,16 @@ before(async () => {
   (globalThis as any).fetch = async (url: string, init?: any) => {
     if (url.endsWith('/health')) {
       healthCalls++;
-      return { ok: true, json: async () => ({ ok: true, ...(tokenFromHealth ? { token: tokenFromHealth } : {}) }) };
+      return {
+        ok: true,
+        json: async () => ({ ok: true, ...(tokenFromHealth ? { token: tokenFromHealth } : {}) }),
+      };
     }
     if (url.endsWith('/events')) {
-      if (failFlushes > 0) { failFlushes--; throw new Error('daemon down'); }
+      if (failFlushes > 0) {
+        failFlushes--;
+        throw new Error('daemon down');
+      }
       const body = JSON.parse(init.body);
       delivered.push({ events: body.events, token: init.headers['x-tabzero-token'] });
       return { ok: true, json: async () => ({ ok: true, count: body.events.length }) };
@@ -69,14 +80,21 @@ before(async () => {
   await import('../src/background.ts'); // registers its listeners at import, as MV3 requires
 });
 
-beforeEach(() => { storage = {}; delivered = []; failFlushes = 0; }); // healthCalls is suite-wide on purpose
+beforeEach(() => {
+  storage = {};
+  delivered = [];
+  failFlushes = 0;
+}); // healthCalls is suite-wide on purpose
 
 /** Simulate Chrome reporting a completed navigation. */
 const navigate = (tabId: number, url: string, title: string) =>
   fire('tabUpdated', tabId, { status: 'complete' }, { id: tabId, url, title, windowId: 1 });
 
 const allEvents = () => delivered.flatMap((d) => d.events);
-const navUrls = () => allEvents().filter((e: any) => e.type === 'navigate').map((e: any) => e.url);
+const navUrls = () =>
+  allEvents()
+    .filter((e: any) => e.type === 'navigate')
+    .map((e: any) => e.url);
 
 test('a failed flush then a retry delivers every event exactly once', async () => {
   failFlushes = 1; // the first POST fails, as if the daemon were down
@@ -107,7 +125,10 @@ test('repeated failures do not compound — five retry cycles still deliver once
 
   // Five alarm cycles while the daemon stays down. The old bug doubled the pending set each time,
   // so by the fifth cycle two events would have become ~64 deliveries.
-  for (let i = 0; i < 5; i++) { await fire('alarm', { name: 'tz_flush' }); await sleep(250); }
+  for (let i = 0; i < 5; i++) {
+    await fire('alarm', { name: 'tz_flush' });
+    await sleep(250);
+  }
   await fire('alarm', { name: 'tz_flush' }); // daemon back up
   await sleep(600);
 
@@ -119,11 +140,22 @@ test('repeated failures do not compound — five retry cycles still deliver once
 test('a service-worker restart adopts the mirror instead of losing the queue', async () => {
   // Simulate the worker having died with events pending: storage holds them, memory does not.
   storage.tz_queue = [
-    { ts: Date.now(), type: 'navigate', tabId: 50, windowId: 1, url: 'https://c.test/recovered', title: 'Recovered' },
+    {
+      ts: Date.now(),
+      type: 'navigate',
+      tabId: 50,
+      windowId: 1,
+      url: 'https://c.test/recovered',
+      title: 'Recovered',
+    },
   ];
   await fire('startup');
   await sleep(600);
-  assert.deepEqual(navUrls(), ['https://c.test/recovered'], 'the persisted event was recovered and sent once');
+  assert.deepEqual(
+    navUrls(),
+    ['https://c.test/recovered'],
+    'the persisted event was recovered and sent once',
+  );
   assert.equal(storage.tz_queue, undefined, 'mirror cleared after delivery');
 });
 
@@ -134,7 +166,10 @@ test('the token is fetched from /health once and attached to every post', async 
   await sleep(1100);
 
   assert.equal(delivered.length, 2, 'two separate flushes');
-  assert.ok(delivered.every((d) => d.token === 'tok-abc123'), 'every post carried the bootstrapped token');
+  assert.ok(
+    delivered.every((d) => d.token === 'tok-abc123'),
+    'every post carried the bootstrapped token',
+  );
   // The token is cached in memory (never chrome.storage), so across this entire run — many flushes
   // over four tests — /health is fetched exactly once. More than one would mean the cache is broken;
   // zero would mean the token never came from the daemon at all.

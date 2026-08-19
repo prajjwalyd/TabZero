@@ -1,7 +1,14 @@
 import { db, nextTrailId } from '../core/db.js';
 import {
-  canonicalize, tokenize, bag, addInto, cosine, topTokens, provisionalLabel,
-  type Canon, type Vec,
+  canonicalize,
+  tokenize,
+  bag,
+  addInto,
+  cosine,
+  topTokens,
+  provisionalLabel,
+  type Canon,
+  type Vec,
 } from './canonical.js';
 import { isSensitiveUrl, redact, redactTextParams } from './redact.js';
 import type { TabEventInput, PageRow } from '../core/types.js';
@@ -39,8 +46,15 @@ export function ingestEvent(ev: TabEventInput): void {
     `INSERT INTO events (ts, type, tab_id, opener_tab_id, window_id, url, canonical_url, title, favicon, description)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    ev.ts, ev.type, ev.tabId ?? null, ev.openerTabId ?? null, ev.windowId ?? null,
-    safeUrl, canon?.canonical ?? null, title, ev.favIconUrl ?? null,
+    ev.ts,
+    ev.type,
+    ev.tabId ?? null,
+    ev.openerTabId ?? null,
+    ev.windowId ?? null,
+    safeUrl,
+    canon?.canonical ?? null,
+    title,
+    ev.favIconUrl ?? null,
     // Logged so a replay reproduces the same vectors and the same Engram signal. Clamped like the
     // page row is, so the log can't become the one unbounded copy.
     redactTextParams((ev.description || ev.heading || '').trim().slice(0, 320)) || null,
@@ -80,14 +94,18 @@ function creditDwell(windowId: number, now: number): void {
   if (a && a.canonical) {
     const dt = Math.min(now - a.since, 30 * 60 * 1000);
     if (dt > 0) {
-      db.prepare('UPDATE pages SET total_dwell_ms = total_dwell_ms + ? WHERE canonical_url = ?').run(dt, a.canonical);
+      db.prepare('UPDATE pages SET total_dwell_ms = total_dwell_ms + ? WHERE canonical_url = ?').run(
+        dt,
+        a.canonical,
+      );
     }
     a.since = now;
   }
 }
 
 function upsertPage(canon: Canon, ev: TabEventInput, revisit: boolean, safeUrl: string | null): void {
-  const existing = db.prepare('SELECT * FROM pages WHERE canonical_url = ?').get(canon.canonical) as PageRow | undefined;
+  const existing = db.prepare('SELECT * FROM pages WHERE canonical_url = ?').get(canon.canonical) as
+    PageRow | undefined;
   const title = (clampTitle(ev.title) || existing?.title || '').trim();
   const rawDesc = redactTextParams((ev.description || ev.heading || '').trim().slice(0, 320)) || null;
   // Suppress site-wide boilerplate (e.g. an SPA's static og:description repeated on every route):
@@ -106,18 +124,26 @@ function upsertPage(canon: Canon, ev: TabEventInput, revisit: boolean, safeUrl: 
     // page reached 436 that way, which then surfaced as the "boomerang page" stat. last_seen is
     // clamped with MAX for the same reason: a replayed old event must not drag recency backwards.
     const bump = ev.type === 'navigate' && revisit && ev.ts > existing.last_seen ? 1 : 0;
-    db.prepare('UPDATE pages SET last_seen = MAX(last_seen, ?), title = ?, visit_count = visit_count + ? WHERE canonical_url = ?')
-      .run(ev.ts, title || existing.title, bump, canon.canonical);
+    db.prepare(
+      'UPDATE pages SET last_seen = MAX(last_seen, ?), title = ?, visit_count = visit_count + ? WHERE canonical_url = ?',
+    ).run(ev.ts, title || existing.title, bump, canon.canonical);
 
     // The first time we learn this page's (non-boilerplate) description — usually the content
     // script arriving just after navigate — fold its tokens into the trail vector + mark memory stale.
     if (metaText && !existing.description) {
       const dtok = tokenize('', canon, metaText);
       let ptok: string[] = [];
-      try { ptok = JSON.parse(existing.tokens || '[]'); } catch { /* ignore */ }
+      try {
+        ptok = JSON.parse(existing.tokens || '[]');
+      } catch {
+        /* ignore */
+      }
       const merged = [...new Set([...ptok, ...dtok])].slice(0, 60);
-      db.prepare('UPDATE pages SET description = ?, tokens = ? WHERE canonical_url = ?')
-        .run(desc, JSON.stringify(merged), canon.canonical);
+      db.prepare('UPDATE pages SET description = ?, tokens = ? WHERE canonical_url = ?').run(
+        desc,
+        JSON.stringify(merged),
+        canon.canonical,
+      );
       if (existing.trail_id) enrichTrailVector(existing.trail_id, dtok, ev.ts);
     } else if (existing.trail_id) {
       touchTrail(existing.trail_id, ev.ts, bump > 0);
@@ -129,7 +155,17 @@ function upsertPage(canon: Canon, ev: TabEventInput, revisit: boolean, safeUrl: 
   db.prepare(
     `INSERT INTO pages (canonical_url, url, title, domain, first_seen, last_seen, visit_count, total_dwell_ms, trail_id, tokens, description)
      VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)`,
-  ).run(canon.canonical, safeUrl ?? canon.canonical, title, canon.domain, ev.ts, ev.ts, null, JSON.stringify(tokens), desc);
+  ).run(
+    canon.canonical,
+    safeUrl ?? canon.canonical,
+    title,
+    canon.domain,
+    ev.ts,
+    ev.ts,
+    null,
+    JSON.stringify(tokens),
+    desc,
+  );
 
   const trailId = assignTrail(canon, tokens, ev);
   db.prepare('UPDATE pages SET trail_id = ? WHERE canonical_url = ?').run(trailId, canon.canonical);
@@ -137,19 +173,24 @@ function upsertPage(canon: Canon, ev: TabEventInput, revisit: boolean, safeUrl: 
 
 /** True if this exact description already appears on a different page of the same domain (site template). */
 function isBoilerplateDesc(domain: string, desc: string, selfCanon: string): boolean {
-  const row = db.prepare(
-    'SELECT 1 FROM pages WHERE domain = ? AND description = ? AND canonical_url != ? LIMIT 1',
-  ).get(domain, desc, selfCanon);
+  const row = db
+    .prepare('SELECT 1 FROM pages WHERE domain = ? AND description = ? AND canonical_url != ? LIMIT 1')
+    .get(domain, desc, selfCanon);
   return !!row;
 }
 
 /** Merge newly-learned metadata tokens into a trail's centroid + re-flag its enrichment. */
 function enrichTrailVector(trailId: string, tokens: string[], ts: number): void {
   if (tokens.length === 0) return;
-  const t = db.prepare('SELECT centroid FROM trails WHERE id = ?').get(trailId) as { centroid: string } | undefined;
+  const t = db.prepare('SELECT centroid FROM trails WHERE id = ?').get(trailId) as
+    { centroid: string } | undefined;
   if (!t) return;
   let cen: Vec = {};
-  try { cen = JSON.parse(t.centroid || '{}'); } catch { /* ignore */ }
+  try {
+    cen = JSON.parse(t.centroid || '{}');
+  } catch {
+    /* ignore */
+  }
   addInto(cen, tokens);
   db.prepare(
     `UPDATE trails SET centroid = ?, last_active = ?, label_dirty = 1, summary_dirty = 1, engram_dirty = 1 WHERE id = ?`,
@@ -162,19 +203,27 @@ function assignTrail(canon: Canon, tokens: string[], ev: TabEventInput): string 
   if (opener != null) {
     const oc = tabCanon.get(opener);
     if (oc) {
-      const op = db.prepare('SELECT trail_id FROM pages WHERE canonical_url = ?').get(oc) as { trail_id: string | null } | undefined;
+      const op = db.prepare('SELECT trail_id FROM pages WHERE canonical_url = ?').get(oc) as
+        { trail_id: string | null } | undefined;
       if (op?.trail_id) return addToTrail(op.trail_id, tokens, ev.ts);
     }
   }
 
   // Otherwise leader-cluster against ALL trails (incl. dormant -> revival is automatic).
   const pv = bag(tokens);
-  const trails = db.prepare('SELECT id, centroid, last_active FROM trails').all() as
-    { id: string; centroid: string; last_active: number }[];
+  const trails = db.prepare('SELECT id, centroid, last_active FROM trails').all() as {
+    id: string;
+    centroid: string;
+    last_active: number;
+  }[];
   let best: { id: string; score: number } | null = null;
   for (const t of trails) {
     let cen: Vec = {};
-    try { cen = JSON.parse(t.centroid || '{}'); } catch { /* ignore */ }
+    try {
+      cen = JSON.parse(t.centroid || '{}');
+    } catch {
+      /* ignore */
+    }
     let score = cosine(pv, cen);
     // The bonus means "this trail was active shortly BEFORE this page", so it needs a non-negative
     // delta. Without the `dt >= 0` guard a trail whose last_active is newer than the incoming event
@@ -190,11 +239,17 @@ function assignTrail(canon: Canon, tokens: string[], ev: TabEventInput): string 
 }
 
 function addToTrail(trailId: string, tokens: string[], ts: number): string {
-  const t = db.prepare('SELECT centroid, page_count, last_active, session_count FROM trails WHERE id = ?').get(trailId) as
+  const t = db
+    .prepare('SELECT centroid, page_count, last_active, session_count FROM trails WHERE id = ?')
+    .get(trailId) as
     { centroid: string; page_count: number; last_active: number; session_count: number } | undefined;
   if (!t) return trailId;
   let cen: Vec = {};
-  try { cen = JSON.parse(t.centroid || '{}'); } catch { /* ignore */ }
+  try {
+    cen = JSON.parse(t.centroid || '{}');
+  } catch {
+    /* ignore */
+  }
   addInto(cen, tokens);
   const pageCount = t.page_count + 1;
   const sessionCount = ts - t.last_active > cfg.RECENCY_WINDOW_MS ? t.session_count + 1 : t.session_count;
@@ -219,7 +274,10 @@ function createTrail(canon: Canon, tokens: string[], ts: number): string {
 
 function touchTrail(trailId: string, ts: number, realVisit: boolean): void {
   if (realVisit) {
-    db.prepare('UPDATE trails SET last_active = ?, summary_dirty = 1, engram_dirty = 1 WHERE id = ?').run(ts, trailId);
+    db.prepare('UPDATE trails SET last_active = ?, summary_dirty = 1, engram_dirty = 1 WHERE id = ?').run(
+      ts,
+      trailId,
+    );
   } else {
     db.prepare('UPDATE trails SET last_active = ? WHERE id = ?').run(ts, trailId);
   }

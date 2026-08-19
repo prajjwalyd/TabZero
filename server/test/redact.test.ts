@@ -35,7 +35,7 @@ test('an unknown param name holding high-entropy material is still caught', () =
   assert.ok(out.includes('REDACTED'), `entropy heuristic missed it: ${out}`);
 });
 
-test('the user\'s actual intent is NOT redacted — a search query is the best signal a trail has', () => {
+test("the user's actual intent is NOT redacted — a search query is the best signal a trail has", () => {
   // This is the line the entropy heuristic must not cross. A long multi-word query matches the
   // "looks like base64" charset once spaces become +, so without the intent allowlist it gets eaten.
   for (const url of [
@@ -79,9 +79,9 @@ test('ordinary research pages are captured normally', () => {
   for (const url of [
     'https://weaviate.io/developers/weaviate',
     'https://news.ycombinator.com/item?id=12345',
-    'https://blog.test/posts/designing-a-login-form',   // *about* login, not a login page
-    'https://docs.test/guide/oauth-explained',           // *about* oauth
-    'https://en.wikipedia.org/wiki/OAuth',              // *about* oauth
+    'https://blog.test/posts/designing-a-login-form', // *about* login, not a login page
+    'https://docs.test/guide/oauth-explained', // *about* oauth
+    'https://en.wikipedia.org/wiki/OAuth', // *about* oauth
   ]) {
     assert.equal(isSensitiveUrl(url), false, `must still be captured: ${url}`);
   }
@@ -195,6 +195,8 @@ test('prose titles are not mangled by param redaction', () => {
 });
 
 test('neutralize covers title-borne secrets on the way out too', () => {
-  const out = neutralize('claude.ai/oauth/authorize?code_challenge=nXAsNAss5Jicld2AGdvsYuhKs0shhsnU9cZBlRhoRF4');
+  const out = neutralize(
+    'claude.ai/oauth/authorize?code_challenge=nXAsNAss5Jicld2AGdvsYuhKs0shhsnU9cZBlRhoRF4',
+  );
   assert.ok(!out.includes('nXAsNAss'), `secret reached the egress payload: ${out}`);
 });

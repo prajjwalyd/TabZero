@@ -14,18 +14,28 @@ import { DB_PATH, ENGRAM_ENABLED, USER_ID } from '../core/config.js';
 let removed = 0;
 for (const suffix of ['', '-wal', '-shm']) {
   const p = DB_PATH + suffix;
-  if (existsSync(p)) { rmSync(p); console.log(`  removed ${p}`); removed++; }
+  if (existsSync(p)) {
+    rmSync(p);
+    console.log(`  removed ${p}`);
+    removed++;
+  }
 }
 
 console.log(removed ? '\n✓ Local DB wiped.' : '\n(no local DB found — already clean)');
 if (USER_ID) {
-  console.log(`  TABZERO_USER_ID is pinned to "${USER_ID}" — that scope is kept. Change/remove it for a new scope.`);
+  console.log(
+    `  TABZERO_USER_ID is pinned to "${USER_ID}" — that scope is kept. Change/remove it for a new scope.`,
+  );
 } else {
-  console.log('  A fresh user_id is generated on the next `pnpm backend` (or set TABZERO_USER_ID to pin one).');
+  console.log(
+    '  A fresh user_id is generated on the next `pnpm backend` (or set TABZERO_USER_ID to pin one).',
+  );
 }
 if (ENGRAM_ENABLED) {
   console.log('\nEngram: memories under any PREVIOUS user_id are now orphaned (harmless).');
-  console.log('  New pushes use the current user_id + whatever topic descriptions are live in your Engram console.');
+  console.log(
+    '  New pushes use the current user_id + whatever topic descriptions are live in your Engram console.',
+  );
   console.log('  To reclaim the old ones, purge that user in the console.');
 }
 console.log('\nNext:  pnpm seed   (optional demo data)   →   pnpm backend');

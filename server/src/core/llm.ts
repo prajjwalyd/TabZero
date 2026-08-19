@@ -30,7 +30,11 @@ function viaClaude(prompt: string, system: string | undefined, timeoutMs: number
       resolve(v);
     };
     const timer = setTimeout(() => {
-      try { child.kill('SIGKILL'); } catch { /* ignore */ }
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
       finish(null);
     }, timeoutMs);
     child.stdout.on('data', (d) => (out += d.toString()));

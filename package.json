@@ -50,6 +50,10 @@
     "build": "pnpm run build:server && pnpm run build:ext",
     "prepare": "tsc -p server/tsconfig.json && cd extension && node build.mjs",
     "typecheck": "tsc -p server/tsconfig.json --noEmit && tsc -p extension/tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "NODE_NO_WARNINGS=1 tsx --test server/test/*.test.ts extension/test/*.test.ts",
     "test:e2e": "NODE_NO_WARNINGS=1 tsx server/test/e2e.mts",
     "prepublishOnly": "pnpm run build"
@@ -58,11 +62,17 @@
     "@clack/prompts": "^1.7.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@resvg/resvg-js": "^2.6.2",
     "@types/chrome": "latest",
     "@types/node": "^24.0.0",
     "esbuild": "^0.25.0",
+    "eslint": "^10.8.1",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.11.0",
+    "prettier": "^3.9.6",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.67.0"
   }
 }

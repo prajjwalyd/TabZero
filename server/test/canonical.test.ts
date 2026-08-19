@@ -34,8 +34,17 @@ test('a trailing slash before a query still dedupes (regression: string-level st
 });
 
 test('canonicalize rejects non-http(s) and junk', () => {
-  for (const bad of [null, undefined, '', 'not a url', 'chrome://extensions', 'about:blank',
-    'file:///tmp/x.html', 'javascript:alert(1)', 'http://newtab/']) {
+  for (const bad of [
+    null,
+    undefined,
+    '',
+    'not a url',
+    'chrome://extensions',
+    'about:blank',
+    'file:///tmp/x.html',
+    'javascript:alert(1)',
+    'http://newtab/',
+  ]) {
     assert.equal(canonicalize(bad as string | null), null, String(bad));
   }
 });
@@ -65,6 +74,3 @@ test('cosine: identical = 1, disjoint = 0, empty = 0 (never NaN)', () => {
   const partial = cosine(a, bag(['gpu', 'benchmark']));
   assert.ok(partial > 0 && partial < 1, `expected (0,1), got ${partial}`);
 });
-
-
-

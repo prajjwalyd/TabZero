@@ -26,19 +26,33 @@ Tab Zero watches your tab stream, reconciles it into semantic **research trails*
 The exact-reopen source of truth is a local SQLite log; the reconciled, evolving memory lives in **Weaviate Engram**.
 
 <div align="center">
-<img src="docs/images/popup-trails.png" alt="Tab Zero popup showing reconciled research trails with category pills"/>
+<img src="docs/images/popup-trails.png" alt="Tab Zero popup showing reconciled research trails with category pills" width="560"/>
 </div>
 
 ---
 
 ## How it works
 
+```mermaid
+flowchart LR
+  subgraph machine["your machine"]
+    ext["Chrome extension<br/>capture · popup · Tab Zero"]
+    agent["any agent<br/>Claude Code · Codex · opencode"]
+    daemon["Node daemon :8787<br/>reconcile · cluster · decay"]
+    db[("SQLite<br/>event log + trails")]
+  end
+  engram["Weaviate Engram<br/>reconciled memory"]
+  llm["LLM<br/>OpenRouter · claude -p"]
+
+  ext -->|"localhost HTTP"| daemon
+  agent -->|"tabzero CLI"| daemon
+  daemon <--> db
+  daemon -.->|"titles + domains"| engram
+  daemon -.->|"labels + recaps"| llm
 ```
-Chrome extension (MV3)  ──localhost HTTP──▶  Node daemon  ──▶  SQLite (raw log + trails)
-  capture + popup UI                          reconcile         └▶ Weaviate Engram (reconciled memory)
-                                              decay + LLM        └▶ OpenRouter / local `claude -p`
-        any agent (Claude Code / Codex / opencode) ──`tabzero` CLI──▶  same daemon, same DB
-```
+
+Solid arrows never leave your machine. The two dotted ones are the only things that do, they carry
+titles and domains rather than pages, and both are opt-in.
 
 - **Local layer** (SQLite) = instant trails + exact-reopen truth + decay. Runs in real time, fully offline.
 - **Engram** = cross-time reconciliation (one bounded, evolving memory per trail) + semantic recall + agent-queryable memory. Catches up asynchronously.
@@ -68,12 +82,12 @@ Tab Zero isn't on npm — `npx` installs straight from this repo and a `prepare`
 2. **Load unpacked** → the folder the wizard prints (`~/.tabzero/extension`)
 3. Pin **Tab Zero**, click it, and browse a bit — trails appear automatically
 
-No key needed to start. Setup also makes `tabzero` a bare command, so after that it's just
+No key needed to start. Setup also offers to install `tabzero` as a bare command, so after that it's just
 `tabzero start` · `key` · `path` · `help`.
 
 ### Updating
 
-| | |
+| Component | Process |
 |---|---|
 | Daemon + CLI | re-run `npx github:prajjwalyd/TabZero` — npx re-resolves the git ref, so you always get the newest commit |
 | Extension | **not automatic** — `tabzero setup` re-stages it, then hit ↻ at `chrome://extensions` |
@@ -146,7 +160,10 @@ Try it with any agent: _"resurrect my GPU pricing research"_ · _"what's my most
 
 ## Configuration
 
-Env vars (all optional). In dev they load from `.env` at the repo root; installed, from `~/.tabzero/.env`.
+Env vars (all optional). A real environment variable always wins; otherwise they load from `.env` — at the
+repo root when you're running a checkout, from `~/.tabzero/.env` when installed. Which one applies depends on
+where the *code* lives, not which directory you launch from, so `npx github:prajjwalyd/TabZero` inside a clone
+still uses `~/.tabzero`.
 
 | Var | Default | Purpose |
 |---|---|---|

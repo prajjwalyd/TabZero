@@ -12,17 +12,23 @@ import assert from 'node:assert/strict';
 import { longestFitting, trimAt } from '../src/truncate.ts';
 
 /** Models a 3-line box that holds `perLine` characters per line, plus the toggle's own width. */
-const layout = (perLine: number, lines = 3, toggleCost = 9) =>
-  (candidate: string) => candidate.length + toggleCost <= perLine * lines;
+const layout =
+  (perLine: number, lines = 3, toggleCost = 9) =>
+  (candidate: string) =>
+    candidate.length + toggleCost <= perLine * lines;
 
 test('text that already fits is returned untouched — no toggle, no ellipsis', () => {
   const short = 'evaluating Opus 5 effort settings for coding tasks';
-  assert.equal(longestFitting(short, () => true), short);
+  assert.equal(
+    longestFitting(short, () => true),
+    short,
+  );
 });
 
 test('a long interest is cut to the largest prefix that still fits', () => {
-  const long = 'Investigating debugging issues in LLM frameworks including LangChain streaming '
-    + 'converters and Gemini function calls plus terminal management tasks for kitty on Hyprland and macOS';
+  const long =
+    'Investigating debugging issues in LLM frameworks including LangChain streaming ' +
+    'converters and Gemini function calls plus terminal management tasks for kitty on Hyprland and macOS';
   const fits = layout(48);
   const out = longestFitting(long, fits);
   assert.ok(fits(out), 'the result must actually fit');
@@ -42,7 +48,10 @@ test('the cut lands on a word boundary and leaves no dangling punctuation', () =
   assert.ok(!/[,;:.–—-]$/.test(out), `dangling punctuation before the ellipsis: ${JSON.stringify(out)}`);
   // The last word must be whole, not sliced mid-word.
   const lastWord = out.split(' ').pop()!;
-  assert.ok(long.includes(lastWord + ' ') || long.endsWith(lastWord), `mid-word cut: ${JSON.stringify(lastWord)}`);
+  assert.ok(
+    long.includes(lastWord + ' ') || long.endsWith(lastWord),
+    `mid-word cut: ${JSON.stringify(lastWord)}`,
+  );
 });
 
 test('a single unbreakable word still yields something rather than hanging', () => {
@@ -57,8 +66,10 @@ test('the toggle competing for space is accounted for, not ignored', () => {
   const long = 'one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen';
   const narrowToggle = longestFitting(long, layout(30, 3, 2));
   const wideToggle = longestFitting(long, layout(30, 3, 20));
-  assert.ok(wideToggle.length < narrowToggle.length,
-    `a wider toggle must shrink the body: ${wideToggle.length} vs ${narrowToggle.length}`);
+  assert.ok(
+    wideToggle.length < narrowToggle.length,
+    `a wider toggle must shrink the body: ${wideToggle.length} vs ${narrowToggle.length}`,
+  );
 });
 
 // ---- trimAt directly ----
@@ -82,7 +93,10 @@ test('a long unbreakable word is sliced rather than collapsing to the first shor
   // deep into the budget before it is used.
   const text = 'a ' + 'x'.repeat(400);
   const out = trimAt(text, 120);
-  assert.ok(out.length > 100, `collapsed to ${out.length} chars ("${out.slice(0, 12)}") — the long-word guard is gone`);
+  assert.ok(
+    out.length > 100,
+    `collapsed to ${out.length} chars ("${out.slice(0, 12)}") — the long-word guard is gone`,
+  );
   assert.ok(out.startsWith('a x'), 'still a prefix of the original');
 });
 

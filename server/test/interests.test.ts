@@ -32,19 +32,26 @@ function installDefaultFetch(): void {
     const q = JSON.parse(init.body).query as string;
     queriesSeen.push(q);
     const memories = (perQuery[q] ?? []).map((content, i) => ({
-      content, topic: 'ResearchInterest', properties: {}, score: 0.9 - i * 0.1,
+      content,
+      topic: 'ResearchInterest',
+      properties: {},
+      score: 0.9 - i * 0.1,
     }));
     return { ok: true, text: async () => JSON.stringify({ memories }) };
   };
 }
 
 // Reinstalled every test on purpose: a test that swaps in its own stub must not leak it to the next.
-beforeEach(() => { perQuery = {}; queriesSeen = []; installDefaultFetch(); });
+beforeEach(() => {
+  perQuery = {};
+  queriesSeen = [];
+  installDefaultFetch();
+});
 
-test('interests are unioned across probes, not limited to one query\'s ranked subset', async () => {
+test("interests are unioned across probes, not limited to one query's ranked subset", async () => {
   // Five interests exist; no single probe retrieves more than two of them.
   perQuery = {
-    'the user\'s main ongoing interests, themes, and projects': ['A', 'B'],
+    "the user's main ongoing interests, themes, and projects": ['A', 'B'],
     'what the user is currently evaluating, comparing, or deciding between': ['B', 'C'],
     'what the user is learning, building, or investigating': ['C', 'D'],
     'recurring topics and themes the user returns to across many sessions': ['E'],
@@ -56,7 +63,7 @@ test('interests are unioned across probes, not limited to one query\'s ranked su
 
 test('a memory returned by more than one probe is listed once', async () => {
   perQuery = {
-    'the user\'s main ongoing interests, themes, and projects': ['dup', 'x'],
+    "the user's main ongoing interests, themes, and projects": ['dup', 'x'],
     'what the user is currently evaluating, comparing, or deciding between': ['dup'],
     'what the user is learning, building, or investigating': ['dup'],
     'recurring topics and themes the user returns to across many sessions': ['dup'],
@@ -70,13 +77,19 @@ test('trail summaries are never mistaken for interests', async () => {
     if (!String(url).endsWith('/memories/search')) return { ok: true, text: async () => '{}' };
     return {
       ok: true,
-      text: async () => JSON.stringify({
-        memories: [
-          { content: 'a real interest', topic: 'ResearchInterest', properties: {}, score: 0.9 },
-          // A per-trail recap: right topic name AND a trail_id scope. Must not surface as an interest.
-          { content: 'You were investigating espresso machines', topic: 'TrailSummary', properties: { trail_id: 't_1' }, score: 0.95 },
-        ],
-      }),
+      text: async () =>
+        JSON.stringify({
+          memories: [
+            { content: 'a real interest', topic: 'ResearchInterest', properties: {}, score: 0.9 },
+            // A per-trail recap: right topic name AND a trail_id scope. Must not surface as an interest.
+            {
+              content: 'You were investigating espresso machines',
+              topic: 'TrailSummary',
+              properties: { trail_id: 't_1' },
+              score: 0.95,
+            },
+          ],
+        }),
     };
   };
   const got = (await engramInterests('test-user')).map((i) => i.content);
@@ -86,7 +99,7 @@ test('trail summaries are never mistaken for interests', async () => {
 test('higher-scoring interests survive the cap', async () => {
   // 14 distinct interests across probes; the cap is 12, and it must drop the weakest, not the last seen.
   perQuery = {
-    'the user\'s main ongoing interests, themes, and projects': Array.from({ length: 14 }, (_, i) => `i${i}`),
+    "the user's main ongoing interests, themes, and projects": Array.from({ length: 14 }, (_, i) => `i${i}`),
   };
   const got = await engramInterests('test-user');
   assert.equal(got.length, 12, 'capped at 12');
@@ -100,22 +113,50 @@ test('higher-scoring interests survive the cap', async () => {
 test('the last-updated timestamp is carried through from Engram', async () => {
   (globalThis as any).fetch = async (url: string) => {
     if (!String(url).endsWith('/memories/search')) return { ok: true, text: async () => '{}' };
-    return { ok: true, text: async () => JSON.stringify({ memories: [
-      { content: 'has both stamps', topic: 'ResearchInterest', properties: {}, score: 0.9,
-        created_at: '2026-07-01T00:00:00.000Z', updated_at: '2026-08-01T12:00:00.000Z' },
-      { content: 'created only', topic: 'ResearchInterest', properties: {}, score: 0.8,
-        created_at: '2026-06-15T06:00:00.000Z' },
-      { content: 'no stamps at all', topic: 'ResearchInterest', properties: {}, score: 0.7 },
-      { content: 'unparseable stamp', topic: 'ResearchInterest', properties: {}, score: 0.6,
-        updated_at: 'not a date' },
-    ] }) };
+    return {
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          memories: [
+            {
+              content: 'has both stamps',
+              topic: 'ResearchInterest',
+              properties: {},
+              score: 0.9,
+              created_at: '2026-07-01T00:00:00.000Z',
+              updated_at: '2026-08-01T12:00:00.000Z',
+            },
+            {
+              content: 'created only',
+              topic: 'ResearchInterest',
+              properties: {},
+              score: 0.8,
+              created_at: '2026-06-15T06:00:00.000Z',
+            },
+            { content: 'no stamps at all', topic: 'ResearchInterest', properties: {}, score: 0.7 },
+            {
+              content: 'unparseable stamp',
+              topic: 'ResearchInterest',
+              properties: {},
+              score: 0.6,
+              updated_at: 'not a date',
+            },
+          ],
+        }),
+    };
   };
   const byContent = new Map((await engramInterests('test-user')).map((i) => [i.content, i.updatedAt]));
 
-  assert.equal(byContent.get('has both stamps'), Date.parse('2026-08-01T12:00:00.000Z'),
-    'updated_at must win over created_at — it is the whole point');
-  assert.equal(byContent.get('created only'), Date.parse('2026-06-15T06:00:00.000Z'),
-    'fall back to created_at when a memory has never been rewritten');
+  assert.equal(
+    byContent.get('has both stamps'),
+    Date.parse('2026-08-01T12:00:00.000Z'),
+    'updated_at must win over created_at — it is the whole point',
+  );
+  assert.equal(
+    byContent.get('created only'),
+    Date.parse('2026-06-15T06:00:00.000Z'),
+    'fall back to created_at when a memory has never been rewritten',
+  );
   assert.equal(byContent.get('no stamps at all'), null, 'absent stamp is null, not 0 or NaN');
   assert.equal(byContent.get('unparseable stamp'), null, 'a garbage stamp must not become NaN');
 });
@@ -124,10 +165,22 @@ test('getInterests only sets updatedAt when Engram actually gave one', async () 
   const { getInterests } = await import('../src/trails/trails.ts');
   (globalThis as any).fetch = async (url: string) => {
     if (!String(url).endsWith('/memories/search')) return { ok: true, text: async () => '{}' };
-    return { ok: true, text: async () => JSON.stringify({ memories: [
-      { content: 'stamped', topic: 'ResearchInterest', properties: {}, score: 0.9, updated_at: '2026-08-01T00:00:00.000Z' },
-      { content: 'unstamped', topic: 'ResearchInterest', properties: {}, score: 0.8 },
-    ] }) };
+    return {
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          memories: [
+            {
+              content: 'stamped',
+              topic: 'ResearchInterest',
+              properties: {},
+              score: 0.9,
+              updated_at: '2026-08-01T00:00:00.000Z',
+            },
+            { content: 'unstamped', topic: 'ResearchInterest', properties: {}, score: 0.8 },
+          ],
+        }),
+    };
   };
   const r = await getInterests('test-user');
   assert.equal(r.source, 'engram');

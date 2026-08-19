@@ -16,15 +16,22 @@ function buildSignal(label: string, pages: PageDTO[]): string[] {
   // if it is specific, so minimization strips identifiers, not subject matter.
   const facts = pages
     .slice(-25)
-    .map((p) => `${neutralize(p.title)}${p.description ? ' — ' + neutralize(p.description.slice(0, 200)) : ''} (${p.domain})`);
+    .map(
+      (p) =>
+        `${neutralize(p.title)}${p.description ? ' — ' + neutralize(p.description.slice(0, 200)) : ''} (${p.domain})`,
+    );
   return [`Research trail: ${neutralize(label)}`, ...facts];
 }
 
 /** Count of trails with pending enrichment work, ignoring the settle gate (used to drive idle backoff). */
 function pendingEnrich(): number {
-  return (db.prepare(
-    'SELECT COUNT(*) c FROM trails WHERE (label_dirty = 1 OR summary_dirty = 1) AND page_count >= ?',
-  ).get(cfg.MIN_TRAIL_PAGES) as { c: number }).c;
+  return (
+    db
+      .prepare(
+        'SELECT COUNT(*) c FROM trails WHERE (label_dirty = 1 OR summary_dirty = 1) AND page_count >= ?',
+      )
+      .get(cfg.MIN_TRAIL_PAGES) as { c: number }
+  ).c;
 }
 
 /**
@@ -39,18 +46,22 @@ export async function enrichSettled(
 ): Promise<{ processed: number; pending: number }> {
   const settledBefore = Date.now() - cfg.TRAIL_SETTLE_MS;
 
-  const labelRows = db.prepare(
-    `SELECT id FROM trails
+  const labelRows = db
+    .prepare(
+      `SELECT id FROM trails
        WHERE label_dirty = 1 AND page_count >= ? AND last_active <= ?
        ORDER BY last_active DESC LIMIT ?`,
-  ).all(cfg.MIN_TRAIL_PAGES, settledBefore, labelLimit) as { id: string }[];
+    )
+    .all(cfg.MIN_TRAIL_PAGES, settledBefore, labelLimit) as { id: string }[];
   for (const { id } of labelRows) await labelTrail(id);
 
-  const recapRows = db.prepare(
-    `SELECT id FROM trails
+  const recapRows = db
+    .prepare(
+      `SELECT id FROM trails
        WHERE summary_dirty = 1 AND page_count >= ? AND last_active <= ?
        ORDER BY last_active DESC LIMIT ?`,
-  ).all(cfg.MIN_TRAIL_PAGES, settledBefore, recapLimit) as { id: string }[];
+    )
+    .all(cfg.MIN_TRAIL_PAGES, settledBefore, recapLimit) as { id: string }[];
   for (const { id } of recapRows) await summarizeTrail(id, { force: true });
 
   return { processed: labelRows.length + recapRows.length, pending: pendingEnrich() };
@@ -79,13 +90,15 @@ export async function flushEngram(
     conds.push('(last_engram_push IS NULL OR last_engram_push <= ?)');
     args.push(now - cfg.ENGRAM_MIN_REPUSH_MS);
   }
-  const pending = (db.prepare(
-    'SELECT COUNT(*) c FROM trails WHERE engram_dirty = 1 AND page_count >= ?',
-  ).get(cfg.MIN_TRAIL_PAGES) as { c: number }).c;
+  const pending = (
+    db
+      .prepare('SELECT COUNT(*) c FROM trails WHERE engram_dirty = 1 AND page_count >= ?')
+      .get(cfg.MIN_TRAIL_PAGES) as { c: number }
+  ).c;
 
-  const dirty = db.prepare(
-    `SELECT id FROM trails WHERE ${conds.join(' AND ')} ORDER BY last_active DESC LIMIT ?`,
-  ).all(...args, limit) as { id: string }[];
+  const dirty = db
+    .prepare(`SELECT id FROM trails WHERE ${conds.join(' AND ')} ORDER BY last_active DESC LIMIT ?`)
+    .all(...args, limit) as { id: string }[];
 
   let pushed = 0;
   for (const { id } of dirty) {
@@ -95,8 +108,11 @@ export async function flushEngram(
     const ref = await engramUpsertTrail(userId, id, signal);
     if (ref) {
       // only clear the dirty flag on success, so failed pushes retry next pass
-      db.prepare('UPDATE trails SET engram_dirty = 0, engram_ref = ?, last_engram_push = ? WHERE id = ?')
-        .run(ref, now, id);
+      db.prepare('UPDATE trails SET engram_dirty = 0, engram_ref = ?, last_engram_push = ? WHERE id = ?').run(
+        ref,
+        now,
+        id,
+      );
       pushed++;
     }
   }

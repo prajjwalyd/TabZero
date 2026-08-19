@@ -5,25 +5,71 @@ import { longestFitting } from './truncate.js';
 const api = {
   get: async (p: string) => fetch(BACKEND + p, { headers: await authHeaders() }).then((r) => r.json()),
   post: async (p: string, body?: unknown) =>
-    fetch(BACKEND + p, { method: 'POST', headers: await authHeaders(true), body: body ? JSON.stringify(body) : undefined }).then((r) => r.json()),
+    fetch(BACKEND + p, {
+      method: 'POST',
+      headers: await authHeaders(true),
+      body: body ? JSON.stringify(body) : undefined,
+    }).then((r) => r.json()),
 };
 
 interface Trail {
-  id: string; label: string; oneLiner: string | null; status: string;
-  liveness: number; pageCount: number; lastActive: number; topDomain: string | null; category: string;
+  id: string;
+  label: string;
+  oneLiner: string | null;
+  status: string;
+  liveness: number;
+  pageCount: number;
+  lastActive: number;
+  topDomain: string | null;
+  category: string;
 }
-interface Hit { trail: Trail; why: 'semantic' | 'keyword'; snippet?: string }
-interface Stat { key: string; label: string; value: string; detail?: string }
-interface Week { headline: string; stats: Stat[] }
+interface Hit {
+  trail: Trail;
+  why: 'semantic' | 'keyword';
+  snippet?: string;
+}
+interface Stat {
+  key: string;
+  label: string;
+  value: string;
+  detail?: string;
+}
+interface Week {
+  headline: string;
+  stats: Stat[];
+}
 /** `source` is load-bearing: 'engram' is real cross-trail synthesis, 'local' is a weaker stand-in. */
-interface Interests { source: 'engram' | 'local'; interests: { label: string; detail?: string; updatedAt?: number }[] }
+interface Interests {
+  source: 'engram' | 'local';
+  interests: { label: string; detail?: string; updatedAt?: number }[];
+}
 
 // Display order + labels for category grouping (mirrors server/src/trails/categories.ts).
-const CAT_ORDER = ['dev', 'learning', 'news', 'social', 'media', 'shopping', 'travel', 'finance', 'work', 'projects', 'general'];
+const CAT_ORDER = [
+  'dev',
+  'learning',
+  'news',
+  'social',
+  'media',
+  'shopping',
+  'travel',
+  'finance',
+  'work',
+  'projects',
+  'general',
+];
 const CAT_LABEL: Record<string, string> = {
-  dev: 'Code & Docs', learning: 'Learning & Research', news: 'News & Reading', social: 'Social',
-  media: 'Entertainment', shopping: 'Shopping', travel: 'Travel', finance: 'Finance',
-  work: 'Work & Productivity', projects: 'Projects & DIY', general: 'Other',
+  dev: 'Code & Docs',
+  learning: 'Learning & Research',
+  news: 'News & Reading',
+  social: 'Social',
+  media: 'Entertainment',
+  shopping: 'Shopping',
+  travel: 'Travel',
+  finance: 'Finance',
+  work: 'Work & Productivity',
+  projects: 'Projects & DIY',
+  general: 'Other',
 };
 
 const $ = (id: string) => document.getElementById(id) as HTMLElement;
@@ -36,8 +82,10 @@ function el(tag: string, cls?: string, txt?: string): HTMLElement {
 function rel(ts: number): string {
   const s = Math.max(0, (Date.now() - ts) / 1000);
   if (s < 60) return 'just now';
-  const m = s / 60; if (m < 60) return `${Math.round(m)}m ago`;
-  const h = m / 60; if (h < 24) return `${Math.round(h)}h ago`;
+  const m = s / 60;
+  if (m < 60) return `${Math.round(m)}m ago`;
+  const h = m / 60;
+  if (h < 24) return `${Math.round(h)}h ago`;
   return `${Math.round(h / 24)}d ago`;
 }
 
@@ -58,8 +106,11 @@ let loaded: Trail[] = [];
  * already on screen. Combined with paint()'s single atomic swap, there is no frame in which the pane
  * is empty.
  */
-const cache: { trails: Trail[] | null; week: Week | null; interests: Interests | null } =
-  { trails: null, week: null, interests: null };
+const cache: { trails: Trail[] | null; week: Week | null; interests: Interests | null } = {
+  trails: null,
+  week: null,
+  interests: null,
+};
 /** Signature of what is currently painted per view, so identical data never triggers a repaint. */
 const painted: Record<View, string> = { trails: '', week: '', interests: '' };
 /** Guards against a slow response for one view landing after the user has switched to another. */
@@ -124,7 +175,7 @@ async function init(): Promise<void> {
   const box = $('search') as HTMLInputElement;
   box.addEventListener('input', onType);
   box.addEventListener('keydown', (e) => {
-    if ((e as KeyboardEvent).key !== 'Enter') return;
+    if (e.key !== 'Enter') return;
     const q = box.value.trim();
     if (q) void runSearch(q);
   });
@@ -145,9 +196,17 @@ async function init(): Promise<void> {
  * time they click it, and a failure is silent — render() will simply try again on demand.
  */
 async function prefetch(): Promise<void> {
-  try { cache.week ??= (await api.get('/week')) as Week; } catch { /* render() retries on demand */ }
+  try {
+    cache.week ??= (await api.get('/week')) as Week;
+  } catch {
+    /* render() retries on demand */
+  }
   if (view === 'week') paintView(); // they got there before we did — upgrade the skeleton in place
-  try { cache.interests ??= (await api.get('/interests')) as Interests; } catch { /* as above */ }
+  try {
+    cache.interests ??= (await api.get('/interests')) as Interests;
+  } catch {
+    /* as above */
+  }
   if (view === 'interests') paintView();
 }
 
@@ -182,7 +241,9 @@ async function refresh(): Promise<void> {
 function setStatus(ok: boolean, h?: any): void {
   const s = $('status');
   s.className = 'status ' + (ok ? 'ok' : 'down');
-  s.title = ok ? `connected · engram ${h.engram ? 'on' : 'off'} · llm ${h.llm} · ${h.trails} trails` : 'backend not running';
+  s.title = ok
+    ? `connected · engram ${h.engram ? 'on' : 'off'} · llm ${h.llm} · ${h.trails} trails`
+    : 'backend not running';
 }
 
 async function updateTabCount(): Promise<void> {
@@ -190,7 +251,9 @@ async function updateTabCount(): Promise<void> {
     const tabs = await chrome.tabs.query({});
     const n = tabs.filter((t) => t.url && !t.url.startsWith('chrome') && !t.url.startsWith('edge')).length;
     $('tabCount').textContent = String(n);
-  } catch { $('tabCount').textContent = '–'; }
+  } catch {
+    $('tabCount').textContent = '–';
+  }
 }
 
 /**
@@ -247,7 +310,7 @@ function paintView(): boolean {
 function repaint(key: View, data: unknown, build: () => void): boolean {
   const sig = JSON.stringify(data);
   if (painted[key] === sig) return true;
-  build();            // paint() clears all signatures as it swaps...
+  build(); // paint() clears all signatures as it swaps...
   painted[key] = sig; // ...so claim this one afterwards, not before
   return true;
 }
@@ -257,7 +320,8 @@ function paintSkeleton(): void {
   const rows = view === 'week' ? 4 : 3;
   paint((out) => {
     const wrap = el('div', view === 'week' ? 'stats' : undefined);
-    for (let i = 0; i < rows; i++) wrap.appendChild(el('div', view === 'week' ? 'skel skel-card' : 'skel skel-row'));
+    for (let i = 0; i < rows; i++)
+      wrap.appendChild(el('div', view === 'week' ? 'skel skel-card' : 'skel skel-row'));
     out.appendChild(wrap);
   });
 }
@@ -269,7 +333,13 @@ function paintTrails(list: Trail[]): void {
 
   paint((out) => {
     if (!list.length) {
-      out.appendChild(el('div', 'empty', 'No trails yet. Browse a little — Tab Zero reconciles your open tabs into research trails automatically.'));
+      out.appendChild(
+        el(
+          'div',
+          'empty',
+          'No trails yet. Browse a little — Tab Zero reconciles your open tabs into research trails automatically.',
+        ),
+      );
       return;
     }
 
@@ -320,9 +390,10 @@ function askDelete(row: HTMLElement, t: Trail): void {
   if (row.querySelector('.confirm')) return; // already asking
   const bar = el('div', 'confirm');
   const msg = el('div', 'confirm-msg');
-  msg.innerHTML = `Delete <b>${t.label.replace(/</g, '&lt;')}</b> and its ${t.pageCount} page${t.pageCount === 1 ? '' : 's'}?`
-    + '<span class="confirm-note">Removes them from the local log too. Any memory Engram already '
-    + 'reconciled stays.';
+  msg.innerHTML =
+    `Delete <b>${t.label.replace(/</g, '&lt;')}</b> and its ${t.pageCount} page${t.pageCount === 1 ? '' : 's'}?` +
+    '<span class="confirm-note">Removes them from the local log too. Any memory Engram already ' +
+    'reconciled stays.';
   bar.appendChild(msg);
 
   const actions = el('div', 'confirm-actions');
@@ -341,8 +412,8 @@ function askDelete(row: HTMLElement, t: Trail): void {
       // Drop it from the cache as well as the DOM, or the next repaint from cache brings it back.
       if (cache.trails) cache.trails = cache.trails.filter((x) => x.id !== t.id);
       loaded = loaded.filter((x) => x.id !== t.id);
-      cache.week = null;       // page/trail totals and every stat just changed
-      cache.interests = null;  // the durable-trail fallback may have drawn on this trail
+      cache.week = null; // page/trail totals and every stat just changed
+      cache.interests = null; // the durable-trail fallback may have drawn on this trail
       row.remove();
       const remaining = cache.trails?.length ?? 0;
       $('listCount').textContent = `${remaining} trail${remaining === 1 ? '' : 's'}`;
@@ -378,7 +449,9 @@ function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLE
   top.appendChild(h);
 
   const btn = el('button', 'resurrect') as HTMLButtonElement;
-  const setBtn = (txt: string) => { btn.innerHTML = iconSvg('resurrect', 13) + `<span>${txt}</span>`; };
+  const setBtn = (txt: string) => {
+    btn.innerHTML = iconSvg('resurrect', 13) + `<span>${txt}</span>`;
+  };
   setBtn('Resurrect');
   top.appendChild(btn);
 
@@ -386,7 +459,10 @@ function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLE
   del.innerHTML = iconSvg('trash', 14);
   del.title = 'Delete this trail';
   del.setAttribute('aria-label', `Delete trail: ${t.label}`);
-  del.addEventListener('click', (e) => { e.stopPropagation(); askDelete(row, t); });
+  del.addEventListener('click', (e) => {
+    e.stopPropagation();
+    askDelete(row, t);
+  });
   top.appendChild(del);
   row.appendChild(top);
 
@@ -394,7 +470,9 @@ function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLE
   // narrow column beside the Resurrect button.
   if (t.oneLiner) row.appendChild(el('div', 'trail-one', t.oneLiner));
   const meta = el('div', 'trail-meta');
-  meta.appendChild(el('span', 'meta-text', `${t.pageCount} pages · ${t.topDomain || '—'} · ${rel(t.lastActive)}`));
+  meta.appendChild(
+    el('span', 'meta-text', `${t.pageCount} pages · ${t.topDomain || '—'} · ${rel(t.lastActive)}`),
+  );
   // How this result surfaced (search only). The tag's job is to answer "why is this row here?", so it
   // names the thing that matched — the words, or the meaning. It used to read "keyword" / "memory":
   // "memory" is our internal word for the Engram layer and told the user nothing about the match, which
@@ -402,10 +480,10 @@ function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLE
   if (why) {
     const semantic = why === 'semantic';
     const tag = el('span', 'match-tag ' + (semantic ? 'via-memory' : 'via-keyword'));
-    tag.innerHTML = iconSvg(semantic ? 'sparkle' : 'search', 11) +
-      `<span>${semantic ? 'meaning' : 'text'}</span>`;
+    tag.innerHTML =
+      iconSvg(semantic ? 'sparkle' : 'search', 11) + `<span>${semantic ? 'meaning' : 'text'}</span>`;
     tag.title = semantic
-      ? 'Found by meaning, not words — Engram\'s semantic memory matched this trail to your query'
+      ? "Found by meaning, not words — Engram's semantic memory matched this trail to your query"
       : 'Found because your words appear in this trail';
     meta.appendChild(tag);
   }
@@ -420,11 +498,19 @@ function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLE
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     // Toggle closed if already open.
-    if (detail.style.display !== 'none') { detail.style.display = 'none'; setBtn('Resurrect'); return; }
+    if (detail.style.display !== 'none') {
+      detail.style.display = 'none';
+      setBtn('Resurrect');
+      return;
+    }
     detail.style.display = 'block';
-    if (loaded) { setBtn('Hide'); return; }
+    if (loaded) {
+      setBtn('Hide');
+      return;
+    }
 
-    btn.disabled = true; setBtn('…');
+    btn.disabled = true;
+    setBtn('…');
     detail.innerHTML = '';
     const summaryEl = el('div', 'summary loading', 'Resurrecting…');
     detail.appendChild(summaryEl);
@@ -437,14 +523,16 @@ function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLE
       // meant the checkpoint tables were written but never read by the only UI that reopens tabs.
       const urls: string[] = (d?.resurrectUrls || []).filter(Boolean);
       const reopen = el('button', 'reopen') as HTMLButtonElement;
-      reopen.innerHTML = iconSvg('reopen', 13) + `<span>Reopen ${urls.length} tab${urls.length === 1 ? '' : 's'}</span>`;
+      reopen.innerHTML =
+        iconSvg('reopen', 13) + `<span>Reopen ${urls.length} tab${urls.length === 1 ? '' : 's'}</span>`;
       reopen.disabled = urls.length === 0;
       reopen.addEventListener('click', (ev) => {
         ev.stopPropagation();
         // Open every url counted on the label. The old `slice(0, 25)` capped here instead, so a
         // 60-page trail promised "Reopen 60 tabs" and delivered 25.
         urls.forEach((u) => chrome.tabs.create({ url: u, active: false }));
-        const s = reopen.querySelector('span'); if (s) s.textContent = 'Reopened';
+        const s = reopen.querySelector('span');
+        if (s) s.textContent = 'Reopened';
         void updateTabCount();
       });
       detail.appendChild(reopen);
@@ -498,8 +586,8 @@ function searchLegend(hits: Hit[]): HTMLElement {
     const semantic = why === 'semantic';
     const item = el('span', 'legend-item');
     const tag = el('span', 'match-tag ' + (semantic ? 'via-memory' : 'via-keyword'));
-    tag.innerHTML = iconSvg(semantic ? 'sparkle' : 'search', 10) +
-      `<span>${semantic ? 'meaning' : 'text'}</span>`;
+    tag.innerHTML =
+      iconSvg(semantic ? 'sparkle' : 'search', 10) + `<span>${semantic ? 'meaning' : 'text'}</span>`;
     item.appendChild(tag);
     item.appendChild(el('span', 'legend-text', explain));
     wrap.appendChild(item);
@@ -511,7 +599,6 @@ function searchLegend(hits: Hit[]): HTMLElement {
 
 let searchSeq = 0;
 async function runSearch(q: string): Promise<void> {
-  const main = $('main');
   const seq = ++searchSeq;
   $('listBar').style.display = 'none'; // the group toggle applies to the list, not search results
 
@@ -528,7 +615,10 @@ async function runSearch(q: string): Promise<void> {
     const { hits } = await api.post('/search', { query: q });
     if (seq !== searchSeq) return; // a newer keystroke superseded this search
     paint((out) => {
-      if (!hits?.length) { out.appendChild(el('div', 'empty', `Nothing matched “${q}” yet.`)); return; }
+      if (!hits?.length) {
+        out.appendChild(el('div', 'empty', `Nothing matched “${q}” yet.`));
+        return;
+      }
       const sorted = (hits as Hit[]).slice().sort((a, b) => b.trail.lastActive - a.trail.lastActive);
       out.appendChild(searchLegend(sorted));
       for (const h of sorted) out.appendChild(trailRow(h.trail, h.why, h.snippet, true));
@@ -551,7 +641,10 @@ async function runSearch(q: string): Promise<void> {
 const onType = (e: Event): void => {
   const q = (e.target as HTMLInputElement).value.trim();
   searchSeq++; // supersede any in-flight semantic search
-  if (!q) { void render(); return; }
+  if (!q) {
+    void render();
+    return;
+  }
   filterLoaded(q);
 };
 
@@ -611,9 +704,10 @@ function paintInterests(data: Interests): void {
   paint((out) => {
     if (!items.length) {
       const d = el('div', 'empty');
-      d.innerHTML = 'No durable interests yet.<br/><br/>An interest forms when a theme recurs across '
-        + 'several sessions or becomes a deep investigation — so this fills in after a few days of browsing, '
-        + 'not immediately.';
+      d.innerHTML =
+        'No durable interests yet.<br/><br/>An interest forms when a theme recurs across ' +
+        'several sessions or becomes a deep investigation — so this fills in after a few days of browsing, ' +
+        'not immediately.';
       out.appendChild(d);
       return;
     }
@@ -622,8 +716,9 @@ function paintInterests(data: Interests): void {
     if (data.source === 'engram') {
       head.textContent = 'What you keep coming back to, synthesized across trails.';
     } else {
-      head.innerHTML = 'Your most durable trails. <span class="int-note">Connect Engram to get real '
-        + 'cross-trail synthesis with current state.</span>';
+      head.innerHTML =
+        'Your most durable trails. <span class="int-note">Connect Engram to get real ' +
+        'cross-trail synthesis with current state.</span>';
     }
     out.appendChild(head);
 
@@ -639,7 +734,9 @@ function paintInterests(data: Interests): void {
       // memories arrive as 250-character paragraphs. Clamped to three lines with a `more…` toggle
       // (attached below only where text is genuinely clipped) and the full text on hover.
       row.appendChild(interestLabel(it.label));
-      const meta = [it.detail, it.updatedAt ? `updated ${rel(it.updatedAt)}` : ''].filter(Boolean).join(' · ');
+      const meta = [it.detail, it.updatedAt ? `updated ${rel(it.updatedAt)}` : '']
+        .filter(Boolean)
+        .join(' · ');
       if (meta) row.appendChild(el('div', 'interest-detail', meta));
       out.appendChild(row);
     }
@@ -688,7 +785,6 @@ function interestLabel(text: string): HTMLElement {
   return label;
 }
 
-
 function fitInterestLabels(): void {
   for (const label of document.querySelectorAll<HTMLElement>('.interest-label')) {
     const full = label.dataset.full;
@@ -723,20 +819,26 @@ function fitInterestLabels(): void {
   }
 }
 
-
-
 let armed = false;
-async function onNuke(): Promise<void> {
+function onNuke(): void {
   const btn = $('nukeBtn') as HTMLButtonElement;
   if (!armed) {
     armed = true;
     btn.textContent = 'Click again to close everything';
     btn.classList.add('armed');
-    setTimeout(() => { if (armed) { armed = false; btn.textContent = 'Reach Tab Zero'; btn.classList.remove('armed'); } }, 4000);
+    setTimeout(() => {
+      if (armed) {
+        armed = false;
+        btn.textContent = 'Reach Tab Zero';
+        btn.classList.remove('armed');
+      }
+    }, 4000);
     return;
   }
-  armed = false; btn.classList.remove('armed'); btn.textContent = 'Reaching zero…';
-  chrome.runtime.sendMessage({ type: 'nuke' });
+  armed = false;
+  btn.classList.remove('armed');
+  btn.textContent = 'Reaching zero…';
+  void chrome.runtime.sendMessage({ type: 'nuke' });
   setTimeout(() => window.close(), 250);
 }
 
@@ -745,7 +847,8 @@ function renderBackendDown(): void {
   $('listBar').style.display = 'none';
   paint((out) => {
     const d = el('div', 'down-msg');
-    d.innerHTML = 'Tab Zero backend isn\'t running.<br/>Start it with <code>pnpm backend</code>, then reopen this popup.';
+    d.innerHTML =
+      "Tab Zero backend isn't running.<br/>Start it with <code>pnpm backend</code>, then reopen this popup.";
     out.appendChild(d);
   });
 }

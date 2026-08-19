@@ -27,7 +27,10 @@ test('liveness decays monotonically as a trail goes stale', () => {
   for (let i = 1; i < series.length; i++) {
     assert.ok(series[i] < series[i - 1], `expected decay at step ${i}: ${series.join(' > ')}`);
   }
-  assert.ok(series.every((v) => v >= 0), 'liveness went negative');
+  assert.ok(
+    series.every((v) => v >= 0),
+    'liveness went negative',
+  );
 });
 
 test('liveness halves after exactly one half-life', () => {
@@ -87,9 +90,9 @@ test('the local interest fallback needs recurrence or depth, not just a long sit
     `INSERT INTO trails (id, label, created, last_active, centroid, page_count, session_count)
      VALUES (?, ?, ?, ?, '{}', ?, ?)`,
   );
-  ins.run('t_rec', 'Recurring theme', now, now, 4, 2);        // returned across sessions -> qualifies
-  ins.run('t_deep', 'Deep investigation', now, now, 10, 1);   // sustained depth -> qualifies
-  ins.run('t_sitting', 'One long sitting', now, now, 4, 1);   // neither -> must not qualify
+  ins.run('t_rec', 'Recurring theme', now, now, 4, 2); // returned across sessions -> qualifies
+  ins.run('t_deep', 'Deep investigation', now, now, 10, 1); // sustained depth -> qualifies
+  ins.run('t_sitting', 'One long sitting', now, now, 4, 1); // neither -> must not qualify
 
   // Dwell is irrelevant now, so give the disqualified trail plenty of it.
   db.prepare(
@@ -109,18 +112,33 @@ test('the local interest fallback needs recurrence or depth, not just a long sit
 // missing-or-dirty froze the placeholder permanently — it left 9 of 20 trails in a real database
 // showing a local recap that could never upgrade, silently voiding "Engram authors your recaps".
 test('a fresh LOCAL recap still needs refreshing while Engram is on', () => {
-  const row = (summary: string | null, dirty: number, source: string | null) =>
-    ({ summary, summary_dirty: dirty, summary_source: source });
+  const row = (summary: string | null, dirty: number, source: string | null) => ({
+    summary,
+    summary_dirty: dirty,
+    summary_source: source,
+  });
 
   // The bug: fresh, not dirty, but authored locally.
-  assert.equal(recapNeedsRefresh(row('a local recap', 0, 'local'), true), true, 'local placeholder must retry Engram');
-  assert.equal(recapNeedsRefresh(row('a heuristic recap', 0, 'heuristic'), true), true, 'heuristic must retry too');
+  assert.equal(
+    recapNeedsRefresh(row('a local recap', 0, 'local'), true),
+    true,
+    'local placeholder must retry Engram',
+  );
+  assert.equal(
+    recapNeedsRefresh(row('a heuristic recap', 0, 'heuristic'), true),
+    true,
+    'heuristic must retry too',
+  );
 
   // Engram's own recap is canonical — stop asking.
   assert.equal(recapNeedsRefresh(row('engram prose', 0, 'engram'), true), false, 'an Engram recap is final');
 
   // With Engram off there is nothing to upgrade to, so a fresh local recap must NOT burn an LLM call.
-  assert.equal(recapNeedsRefresh(row('a local recap', 0, 'local'), false), false, 'no key: keep the placeholder');
+  assert.equal(
+    recapNeedsRefresh(row('a local recap', 0, 'local'), false),
+    false,
+    'no key: keep the placeholder',
+  );
 
   // Missing or dirty always needs work, either way.
   for (const engramOn of [true, false]) {

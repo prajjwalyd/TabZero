@@ -36,7 +36,12 @@ export function longestFitting(text: string, fits: (candidate: string) => boolea
   let best = 0;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (fits(trimAt(text, mid))) { best = mid; lo = mid + 1; } else { hi = mid - 1; }
+    if (fits(trimAt(text, mid))) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
   }
   return trimAt(text, best);
 }

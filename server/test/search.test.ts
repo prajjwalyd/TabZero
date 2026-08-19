@@ -16,8 +16,8 @@ import { join } from 'node:path';
 const tmp = mkdtempSync(join(tmpdir(), 'tabzero-search-'));
 process.env.TABZERO_DATA = tmp;
 process.env.TABZERO_USER_ID = 'test-user';
-process.env.ENGRAM_API_KEY = 'eng_test_key';            // Engram ON, but every call is intercepted
-process.env.ENGRAM_BASE = 'https://engram.test/v1';     // https, so the boot-time scheme check passes
+process.env.ENGRAM_API_KEY = 'eng_test_key'; // Engram ON, but every call is intercepted
+process.env.ENGRAM_BASE = 'https://engram.test/v1'; // https, so the boot-time scheme check passes
 
 const { searchTrails } = await import('../src/trails/trails.ts');
 const { db } = await import('../src/core/db.ts');
@@ -50,13 +50,27 @@ before(() => {
   // Six trails that all match the literal word "espresso" — more than the default limit of 5, so the
   // keyword pass alone can fill every slot.
   for (let i = 1; i <= 6; i++) {
-    ins.run(`t_kw${i}`, `Espresso machine research ${i}`, 'Comparing espresso machines', now - i * 1000, now - i * 1000);
+    ins.run(
+      `t_kw${i}`,
+      `Espresso machine research ${i}`,
+      'Comparing espresso machines',
+      now - i * 1000,
+      now - i * 1000,
+    );
   }
   // One trail sharing NO word with the query. Only Engram can surface it.
-  ins.run('t_sem', 'Grinder burr geometry', 'Investigating conical versus flat burrs', now - 9000, now - 9000);
+  ins.run(
+    't_sem',
+    'Grinder burr geometry',
+    'Investigating conical versus flat burrs',
+    now - 9000,
+    now - 9000,
+  );
 });
 
-beforeEach(() => { semanticIds = []; });
+beforeEach(() => {
+  semanticIds = [];
+});
 
 test('a semantic hit survives even when keyword search could fill every slot', async () => {
   semanticIds = ['t_sem'];
@@ -84,7 +98,10 @@ test('when Engram returns nothing, keyword backfills the reserved slots', async 
   semanticIds = []; // Engram off / cold / nothing relevant
   const hits = await searchTrails('test-user', 'espresso', 5);
   assert.equal(hits.length, 5, 'a hybrid search must never return fewer rows than keyword alone would');
-  assert.ok(hits.every((h) => h.why === 'keyword'), 'all keyword when there is no semantic contribution');
+  assert.ok(
+    hits.every((h) => h.why === 'keyword'),
+    'all keyword when there is no semantic contribution',
+  );
   assert.equal(new Set(hits.map((h) => h.trail.id)).size, 5, 'no duplicates');
 });
 
@@ -99,7 +116,10 @@ test('a semantic hit that duplicates a keyword hit is not listed twice', async (
 test('an empty query lists trails rather than searching', async () => {
   const hits = await searchTrails('test-user', '   ', 5);
   assert.ok(hits.length > 0);
-  assert.ok(hits.every((h) => h.why === 'list'), 'empty query is a list, not a match');
+  assert.ok(
+    hits.every((h) => h.why === 'list'),
+    'empty query is a list, not a match',
+  );
 });
 
 test('a forming trail is not searchable, matching what the Trails list shows', async () => {
@@ -115,7 +135,10 @@ test('a forming trail is not searchable, matching what the Trails list shows', a
   assert.ok(!ids.includes('t_forming'), `a forming trail leaked into search: ${ids.join(', ')}`);
 
   // ...but a real trail with the same words is still found, so the floor isn't just breaking search.
-  assert.ok(ids.some((i) => i.startsWith('t_kw')), 'graduated trails must still match');
+  assert.ok(
+    ids.some((i) => i.startsWith('t_kw')),
+    'graduated trails must still match',
+  );
 });
 
 test('Engram cannot reintroduce a forming trail through the semantic pass', async () => {

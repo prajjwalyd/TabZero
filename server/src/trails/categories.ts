@@ -9,91 +9,324 @@ import * as cfg from '../core/config.js';
 
 interface CategoryDef {
   key: string;
-  domains?: string[];      // exact host or any subdomain of these
+  domains?: string[]; // exact host or any subdomain of these
   domainSubstr?: string[]; // host contains this fragment
-  kw?: string[];           // trail tokens that signal this category
+  kw?: string[]; // trail tokens that signal this category
 }
 
 const CATS: CategoryDef[] = [
   {
     key: 'dev',
-    domains: ['github.com', 'gitlab.com', 'stackoverflow.com', 'stackexchange.com', 'npmjs.com',
-      'pypi.org', 'developer.mozilla.org', 'readthedocs.io', 'huggingface.co', 'vercel.com',
-      'netlify.com', 'kubernetes.io', 'postgresql.org', 'rust-lang.org', 'weaviate.io'],
+    domains: [
+      'github.com',
+      'gitlab.com',
+      'stackoverflow.com',
+      'stackexchange.com',
+      'npmjs.com',
+      'pypi.org',
+      'developer.mozilla.org',
+      'readthedocs.io',
+      'huggingface.co',
+      'vercel.com',
+      'netlify.com',
+      'kubernetes.io',
+      'postgresql.org',
+      'rust-lang.org',
+      'weaviate.io',
+    ],
     domainSubstr: ['docs.', 'developer.', 'api.', 'devcenter.'],
-    kw: ['api', 'sdk', 'npm', 'python', 'javascript', 'typescript', 'react', 'code', 'function',
-      'error', 'install', 'config', 'database', 'server', 'git', 'deploy', 'endpoint', 'query',
-      'schema', 'debug', 'compiler', 'index', 'postgres', 'docker', 'kubernetes', 'embeddings'],
+    kw: [
+      'api',
+      'sdk',
+      'npm',
+      'python',
+      'javascript',
+      'typescript',
+      'react',
+      'code',
+      'function',
+      'error',
+      'install',
+      'config',
+      'database',
+      'server',
+      'git',
+      'deploy',
+      'endpoint',
+      'query',
+      'schema',
+      'debug',
+      'compiler',
+      'index',
+      'postgres',
+      'docker',
+      'kubernetes',
+      'embeddings',
+    ],
   },
   {
     key: 'travel',
-    domains: ['booking.com', 'airbnb.com', 'expedia.com', 'kayak.com', 'tripadvisor.com',
-      'skyscanner.com', 'hotels.com', 'trainline.com', 'omio.com', 'trip.com', 'marriott.com',
-      'ryanair.com', 'lufthansa.com', 'united.com', 'rome2rio.com'],
-    kw: ['flight', 'flights', 'hotel', 'hostel', 'trip', 'ticket', 'tickets', 'train', 'airport',
-      'airline', 'itinerary', 'booking', 'travel', 'vacation', 'airfare', 'departure', 'baggage',
-      'lisbon', 'rail', 'metro', 'accommodation'],
+    domains: [
+      'booking.com',
+      'airbnb.com',
+      'expedia.com',
+      'kayak.com',
+      'tripadvisor.com',
+      'skyscanner.com',
+      'hotels.com',
+      'trainline.com',
+      'omio.com',
+      'trip.com',
+      'marriott.com',
+      'ryanair.com',
+      'lufthansa.com',
+      'united.com',
+      'rome2rio.com',
+    ],
+    kw: [
+      'flight',
+      'flights',
+      'hotel',
+      'hostel',
+      'trip',
+      'ticket',
+      'tickets',
+      'train',
+      'airport',
+      'airline',
+      'itinerary',
+      'booking',
+      'travel',
+      'vacation',
+      'airfare',
+      'departure',
+      'baggage',
+      'lisbon',
+      'rail',
+      'metro',
+      'accommodation',
+    ],
   },
   {
     key: 'shopping',
-    domains: ['amazon.com', 'ebay.com', 'etsy.com', 'walmart.com', 'bestbuy.com', 'aliexpress.com',
-      'target.com', 'ikea.com', 'newegg.com', 'wayfair.com', 'shopify.com'],
-    kw: ['price', 'buy', 'cart', 'deal', 'shipping', 'order', 'discount', 'coupon', 'sale',
-      'product', 'checkout', 'refurbished'],
+    domains: [
+      'amazon.com',
+      'ebay.com',
+      'etsy.com',
+      'walmart.com',
+      'bestbuy.com',
+      'aliexpress.com',
+      'target.com',
+      'ikea.com',
+      'newegg.com',
+      'wayfair.com',
+      'shopify.com',
+    ],
+    kw: [
+      'price',
+      'buy',
+      'cart',
+      'deal',
+      'shipping',
+      'order',
+      'discount',
+      'coupon',
+      'sale',
+      'product',
+      'checkout',
+      'refurbished',
+    ],
   },
   {
     key: 'social',
-    domains: ['twitter.com', 'x.com', 'reddit.com', 'instagram.com', 'facebook.com', 'tiktok.com',
-      'linkedin.com', 'threads.net', 'mastodon.social', 'bsky.app'],
+    domains: [
+      'twitter.com',
+      'x.com',
+      'reddit.com',
+      'instagram.com',
+      'facebook.com',
+      'tiktok.com',
+      'linkedin.com',
+      'threads.net',
+      'mastodon.social',
+      'bsky.app',
+    ],
     kw: ['post', 'thread', 'comment', 'tweet', 'follow', 'feed', 'subreddit', 'viral', 'dm'],
   },
   {
     key: 'media',
-    domains: ['youtube.com', 'netflix.com', 'spotify.com', 'twitch.tv', 'hulu.com', 'disneyplus.com',
-      'soundcloud.com', 'vimeo.com', 'primevideo.com', 'max.com'],
-    kw: ['video', 'watch', 'episode', 'stream', 'music', 'playlist', 'movie', 'song', 'album',
-      'trailer', 'season', 'podcast'],
+    domains: [
+      'youtube.com',
+      'netflix.com',
+      'spotify.com',
+      'twitch.tv',
+      'hulu.com',
+      'disneyplus.com',
+      'soundcloud.com',
+      'vimeo.com',
+      'primevideo.com',
+      'max.com',
+    ],
+    kw: [
+      'video',
+      'watch',
+      'episode',
+      'stream',
+      'music',
+      'playlist',
+      'movie',
+      'song',
+      'album',
+      'trailer',
+      'season',
+      'podcast',
+    ],
   },
   {
     key: 'work',
-    domains: ['notion.so', 'slack.com', 'linear.app', 'asana.com', 'trello.com', 'figma.com',
-      'atlassian.net', 'monday.com', 'clickup.com', 'airtable.com'],
+    domains: [
+      'notion.so',
+      'slack.com',
+      'linear.app',
+      'asana.com',
+      'trello.com',
+      'figma.com',
+      'atlassian.net',
+      'monday.com',
+      'clickup.com',
+      'airtable.com',
+    ],
     domainSubstr: ['mail.', 'calendar.', 'drive.'],
-    kw: ['meeting', 'calendar', 'roadmap', 'sprint', 'ticket', 'spreadsheet', 'agenda', 'standup',
-      'okr', 'planning'],
+    kw: [
+      'meeting',
+      'calendar',
+      'roadmap',
+      'sprint',
+      'ticket',
+      'spreadsheet',
+      'agenda',
+      'standup',
+      'okr',
+      'planning',
+    ],
   },
   {
     key: 'projects',
-    domains: ['instructables.com', 'thingiverse.com', 'ikeahackers.net', 'homedepot.com',
-      'lowes.com', 'ravelry.com'],
-    kw: ['diy', 'build', 'conversion', 'woodworking', 'renovation', 'garden', 'craft', 'homemade',
-      'camper', 'workshop', 'restore', 'wiring', 'insulation', 'layout'],
+    domains: [
+      'instructables.com',
+      'thingiverse.com',
+      'ikeahackers.net',
+      'homedepot.com',
+      'lowes.com',
+      'ravelry.com',
+    ],
+    kw: [
+      'diy',
+      'build',
+      'conversion',
+      'woodworking',
+      'renovation',
+      'garden',
+      'craft',
+      'homemade',
+      'camper',
+      'workshop',
+      'restore',
+      'wiring',
+      'insulation',
+      'layout',
+    ],
   },
   {
     key: 'news',
-    domains: ['nytimes.com', 'bbc.com', 'bbc.co.uk', 'theverge.com', 'techcrunch.com', 'wired.com',
-      'medium.com', 'substack.com', 'arstechnica.com', 'bloomberg.com', 'wsj.com', 'theguardian.com',
-      'reuters.com', 'hackernews.com', 'news.ycombinator.com'],
+    domains: [
+      'nytimes.com',
+      'bbc.com',
+      'bbc.co.uk',
+      'theverge.com',
+      'techcrunch.com',
+      'wired.com',
+      'medium.com',
+      'substack.com',
+      'arstechnica.com',
+      'bloomberg.com',
+      'wsj.com',
+      'theguardian.com',
+      'reuters.com',
+      'hackernews.com',
+      'news.ycombinator.com',
+    ],
     kw: ['news', 'article', 'report', 'breaking', 'opinion', 'analysis', 'story', 'headline'],
   },
   {
     key: 'learning',
-    domains: ['coursera.org', 'udemy.com', 'wikipedia.org', 'khanacademy.org', 'edx.org',
-      'arxiv.org', 'scholar.google.com', 'freecodecamp.org'],
-    kw: ['tutorial', 'guide', 'course', 'learn', 'lesson', 'paper', 'study', 'explained',
-      'introduction', 'basics', 'fundamentals', 'beginner'],
+    domains: [
+      'coursera.org',
+      'udemy.com',
+      'wikipedia.org',
+      'khanacademy.org',
+      'edx.org',
+      'arxiv.org',
+      'scholar.google.com',
+      'freecodecamp.org',
+    ],
+    kw: [
+      'tutorial',
+      'guide',
+      'course',
+      'learn',
+      'lesson',
+      'paper',
+      'study',
+      'explained',
+      'introduction',
+      'basics',
+      'fundamentals',
+      'beginner',
+    ],
   },
   {
     key: 'finance',
-    domains: ['coinbase.com', 'binance.com', 'robinhood.com', 'chase.com', 'paypal.com',
-      'stripe.com', 'fidelity.com', 'schwab.com'],
-    kw: ['invoice', 'tax', 'payment', 'crypto', 'stock', 'bank', 'budget', 'salary', 'billing',
-      'portfolio', 'dividend'],
+    domains: [
+      'coinbase.com',
+      'binance.com',
+      'robinhood.com',
+      'chase.com',
+      'paypal.com',
+      'stripe.com',
+      'fidelity.com',
+      'schwab.com',
+    ],
+    kw: [
+      'invoice',
+      'tax',
+      'payment',
+      'crypto',
+      'stock',
+      'bank',
+      'budget',
+      'salary',
+      'billing',
+      'portfolio',
+      'dividend',
+    ],
   },
 ];
 
 /** The seed vocabulary the growable `categories` table is initialized from (seed=1, never GC'd). */
-const SEED_ORDER = ['dev', 'learning', 'news', 'social', 'media', 'shopping', 'travel', 'finance', 'work', 'projects', 'general'];
+const SEED_ORDER = [
+  'dev',
+  'learning',
+  'news',
+  'social',
+  'media',
+  'shopping',
+  'travel',
+  'finance',
+  'work',
+  'projects',
+  'general',
+];
 const SEED_LABEL: Record<string, string> = {
   dev: 'Code & Docs',
   learning: 'Learning & Research',
@@ -151,11 +384,27 @@ export function categoryPromptList(): string {
   return [...labelCache!.entries()].map(([k, l]) => `${k} (${l})`).join(', ');
 }
 
-const FILLER = new Set(['and', 'the', 'of', 'my', 'for', 'stuff', 'things', 'misc', 'other', 'various', 'random', 'general']);
+const FILLER = new Set([
+  'and',
+  'the',
+  'of',
+  'my',
+  'for',
+  'stuff',
+  'things',
+  'misc',
+  'other',
+  'various',
+  'random',
+  'general',
+]);
 
 /** Normalize an LLM-proposed category into a canonical key: 1-2 significant tokens, lowercase, hyphenated. */
 function normalizeKey(raw: string): string {
-  const toks = raw.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 1 && !FILLER.has(t));
+  const toks = raw
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length > 1 && !FILLER.has(t));
   return toks.slice(0, 2).join('-');
 }
 
@@ -207,7 +456,11 @@ export function resolveCategory(raw: string | null | undefined): string | null {
   if (!raw) return null;
   ensure();
   // Fast path: the model named an existing key outright.
-  const direct = raw.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).find((w) => keyCache!.has(w));
+  const direct = raw
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .find((w) => keyCache!.has(w));
   if (direct) return direct;
 
   const key = normalizeKey(raw);
@@ -219,8 +472,11 @@ export function resolveCategory(raw: string | null | undefined): string | null {
 
   // Genuinely novel. Mint it — unless we've saturated, in which case fall back to the heuristic.
   if (keyCache!.size >= cfg.MAX_CATEGORIES) return null;
-  db.prepare('INSERT OR IGNORE INTO categories (key, label, seed, created) VALUES (?, ?, 0, ?)')
-    .run(key, titleCase(key.replace(/-/g, ' ')), Date.now());
+  db.prepare('INSERT OR IGNORE INTO categories (key, label, seed, created) VALUES (?, ?, 0, ?)').run(
+    key,
+    titleCase(key.replace(/-/g, ' ')),
+    Date.now(),
+  );
   refresh();
   return key;
 }
@@ -233,9 +489,9 @@ export function resolveCategory(raw: string | null | undefined): string | null {
 export function consolidateCategories(): number {
   ensure();
   const usage = new Map<string, number>();
-  for (const r of db.prepare(
-    'SELECT category, COUNT(*) c FROM trails WHERE category IS NOT NULL GROUP BY category',
-  ).all() as { category: string; c: number }[]) {
+  for (const r of db
+    .prepare('SELECT category, COUNT(*) c FROM trails WHERE category IS NOT NULL GROUP BY category')
+    .all() as { category: string; c: number }[]) {
     usage.set(r.category, r.c);
   }
   const cats = db.prepare('SELECT key, seed FROM categories').all() as { key: string; seed: number }[];
