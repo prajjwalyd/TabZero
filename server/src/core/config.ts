@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 
 /** Walk up from a starting dir to find the repo root (marked by tsconfig.base.json, committed & root-only). Null if not in a repo. */
 function findRepoRoot(start: string): string | null {
@@ -39,11 +40,26 @@ function loadEnv(p: string): void {
 }
 export const DATA_DIR =
   process.env.TABZERO_DATA || (repoRoot ? join(repoRoot, '.tabzero') : join(homedir(), '.tabzero'));
-mkdirSync(DATA_DIR, { recursive: true });
+mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+
+/**
+ * Clamp a data file to owner-only. Everything in DATA_DIR is sensitive — the DB is a complete
+ * browsing history, the -wal holds the most recent writes of one, and .env holds the Engram API key —
+ * but the default umask (022) creates all of them world-readable. Locking down only the token file was
+ * pointless: another local account could skip the token entirely and read tabzero.db directly.
+ *
+ * mkdir's `mode` is masked by umask and does nothing on an existing directory, so chmod explicitly, on
+ * every start, and never throw — a permission we cannot set is not a reason to fail to boot.
+ */
+export function hardenPath(p: string): void {
+  try { if (existsSync(p)) chmodSync(p, statSync(p).isDirectory() ? 0o700 : 0o600); } catch { /* best effort */ }
+}
+hardenPath(DATA_DIR);
 
 // Where the .env lives: dev reads <repo>/.env (git-ignored, convenient); an installed copy reads
 // <DATA_DIR>/.env so `tabzero key` has a stable home for it. Loaded before any env-derived config below.
 export const ENV_PATH = repoRoot ? join(repoRoot, '.env') : join(DATA_DIR, '.env');
+hardenPath(ENV_PATH); // holds ENGRAM_API_KEY / OPENROUTER_API_KEY — never world-readable
 loadEnv(ENV_PATH);
 
 export const DB_PATH = process.env.TABZERO_DB || join(DATA_DIR, 'tabzero.db');
@@ -54,11 +70,57 @@ export const USER_ID = (process.env.TABZERO_USER_ID || '').trim();
 
 export const HOST = '127.0.0.1';
 export const PORT = Number(process.env.TABZERO_PORT || 8787);
-export const TOKEN = process.env.TABZERO_TOKEN || 'tabzero-dev';
+
+/**
+ * Shared secret between the daemon and the extension. Minted randomly on first run and persisted
+ * beside the DB (0600) rather than shipped as a publicly-known constant — otherwise every install
+ * would share one token and anything on the machine could read your whole browsing history by
+ * guessing it. TABZERO_TOKEN pins it explicitly.
+ *
+ * The extension learns it from /health. That is safe because of TWO things in daemon/http.ts, and it
+ * needs both: no CORS headers (a cross-origin page can send the request but not read the reply) AND a
+ * Host allowlist (without which a page on a domain re-resolved to 127.0.0.1 reaches us as *same*
+ * origin, where CORS is never consulted and the reply — token included — is handed straight to it).
+ */
+function loadToken(): string {
+  const pinned = (process.env.TABZERO_TOKEN || '').trim();
+  if (pinned) return pinned;
+  const p = join(DATA_DIR, 'token');
+  if (existsSync(p)) {
+    const t = readFileSync(p, 'utf8').trim();
+    if (t) return t;
+  }
+  const t = randomUUID();
+  writeFileSync(p, t + '\n', { mode: 0o600 });
+  return t;
+}
+export const TOKEN = loadToken();
 
 // Engram (Weaviate) — reconciled memory layer
 export const ENGRAM_API_KEY = process.env.ENGRAM_API_KEY || '';
-export const ENGRAM_BASE = process.env.ENGRAM_BASE || 'https://api.engram.weaviate.io/v1';
+
+/**
+ * Refuse to talk to Engram over plaintext. Every request carries `Authorization: Bearer <key>` plus
+ * page titles and descriptions, so an `http://` base would put the API key AND the browsing signal on
+ * the wire in the clear. The default is https, but ENGRAM_BASE is an env var and a typo'd or
+ * copy-pasted `http://` would silently downgrade every push — so fail loudly at boot instead of
+ * exfiltrating quietly. Loopback is exempted so a local mock/proxy stays usable in development.
+ */
+function requireSecureBase(base: string): string {
+  if (!ENGRAM_API_KEY) return base; // Engram off — nothing is sent, nothing to protect
+  let u: URL;
+  try { u = new URL(base); } catch { throw new Error(`ENGRAM_BASE is not a valid URL: ${base}`); }
+  const loopback = u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]' || u.hostname === '::1';
+  if (u.protocol !== 'https:' && !loopback) {
+    throw new Error(
+      `ENGRAM_BASE must use https:// (got ${u.protocol}//${u.hostname}). Every Engram request carries `
+      + 'your API key and your page titles; plaintext would expose both. Loopback is the only exception.',
+    );
+  }
+  return base;
+}
+
+export const ENGRAM_BASE = requireSecureBase(process.env.ENGRAM_BASE || 'https://api.engram.weaviate.io/v1');
 export const ENGRAM_ENABLED = ENGRAM_API_KEY.length > 0;
 export const ENGRAM_TIMEOUT_MS = Number(process.env.TABZERO_ENGRAM_TIMEOUT_MS || 15000); // hard cap so a slow/unreachable endpoint can't hang the daemon or seed
 export const DEBUG = process.env.TABZERO_DEBUG === '1'; // set TABZERO_DEBUG=1 for verbose Engram retrieval logs
@@ -79,22 +141,20 @@ export const ASSIGN_THRESHOLD = 0.26; // min lexical cosine to join an existing 
 export const RECENCY_WINDOW_MS = 30 * 60 * 1000;
 export const RECENCY_BONUS = 0.15;
 export const MIN_TRAIL_PAGES = 2; // pages needed to graduate forming -> live
+export const RESURRECT_MAX_TABS = Number(process.env.TABZERO_RESURRECT_MAX_TABS || 25); // hard cap on tabs a single resurrect may reopen
+export const RESURRECT_BOUNCE_DWELL_MS = 5000; // under this dwell a page is a bounce: it loses its seat under the cap to a page you actually read
 export const DECAY_HALFLIFE_DAYS = 7;
 export const DORMANT_AFTER_DAYS = 3;
 export const ARCHIVE_AFTER_DAYS = 30;
 
-// Research interests are GATED so the layer stays meaningful — not every trail is an interest. A
-// theme qualifies only if it's durable: recurring across sessions OR a deep single trail, AND still
-// recent (liveness floor). Local enforces this gate; Engram only synthesizes/names the survivors.
+// Research interests come from Engram's ResearchInterest topic, whose description carries the
+// durability rule and merges near-duplicates. These constants gate only the LOCAL FALLBACK shown when
+// Engram is off or hasn't extracted yet: a trail stands in for an interest if it recurs across
+// sessions or is a deep investigation, and is still recent. There is deliberately no dwell-only
+// branch — a long single sitting is an absorbing afternoon, not a durable interest.
 export const INTEREST_MIN_SESSIONS = 2;                 // recurring: returned across >=2 sessions
 export const INTEREST_DEEP_PAGES = 8;                   // deep: a big single-trail rabbit hole
-export const INTEREST_DEEP_DWELL_MS = 8 * 60 * 1000;    // ...or a lot of time invested
 export const INTEREST_MIN_LIVENESS = 0.5;               // recency floor — stale obsessions drop off
-// Local theme merge sits *below* the trail-assign threshold (0.26): trails similar enough to exceed
-// that are already one trail, so local clustering only catches the loosely-related [0.18,0.26) band.
-// The real cross-trail semantic merge (distinct words, same topic) is Engram's job — embeddings catch
-// what lexical centroids can't.
-export const INTEREST_THEME_THRESHOLD = 0.18;
 
 // Categories are a *growable* vocabulary: seeded from the fixed taxonomy, the LLM reuses an existing
 // one where it can and mints a new key only when nothing fits. This is the saturation backstop — a

@@ -5,7 +5,10 @@ import { cpSync, mkdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
 const watch = process.argv.includes('--watch');
 
 function copyStatic() {
-  cpSync('manifest.json', 'dist/manifest.json');
+  // Stamp the version from the root package.json so the manifest can't drift out of sync with it.
+  const version = JSON.parse(readFileSync('../package.json', 'utf8')).version;
+  const manifest = JSON.parse(readFileSync('manifest.json', 'utf8'));
+  writeFileSync('dist/manifest.json', JSON.stringify({ ...manifest, version }, null, 2) + '\n');
   cpSync('src/popup.html', 'dist/popup.html');
   cpSync('src/popup.css', 'dist/popup.css');
   cpSync('src/zero.html', 'dist/zero.html');

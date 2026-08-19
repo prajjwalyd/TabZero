@@ -1,13 +1,13 @@
-import { startHttp } from './http.js';
-import { HOST, PORT, DB_PATH, ENGRAM_ENABLED } from './config.js';
-import { getUserId } from './db.js';
-import { LLM_BACKEND } from './llm.js';
-import { startScheduler } from './scheduler.js';
+import { startHttp } from './daemon/http.js';
+import { HOST, PORT, DB_PATH, ENGRAM_ENABLED } from './core/config.js';
+import { getUserId } from './core/db.js';
+import { LLM_BACKEND } from './core/llm.js';
+import { startScheduler } from './daemon/scheduler.js';
 
 const server = startHttp();
 
 console.log(`
-  ▟ Tab Zero backend
+  Tab Zero backend
   → http://${HOST}:${PORT}
   → data:   ${DB_PATH}
   → engram: ${ENGRAM_ENABLED ? 'on' : 'off'}    llm: ${LLM_BACKEND}    user: ${getUserId()}

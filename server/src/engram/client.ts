@@ -8,7 +8,7 @@
 // only the raw log. (Previously we pushed a pre-baked local summary, which reduced Engram to a
 // vector-search box — reconciliation had nothing to reconcile.)
 
-import { ENGRAM_API_KEY, ENGRAM_BASE, ENGRAM_ENABLED, ENGRAM_TIMEOUT_MS, TRAIL_TOPIC, INTEREST_TOPIC, DEBUG } from './config.js';
+import { ENGRAM_API_KEY, ENGRAM_BASE, ENGRAM_ENABLED, ENGRAM_TIMEOUT_MS, TRAIL_TOPIC, INTEREST_TOPIC, DEBUG } from '../core/config.js';
 
 interface PostResult {
   ok: boolean;
@@ -78,10 +78,19 @@ export async function engramUpsertTrail(
 export interface EngramHit {
   content: string;
   trailId: string | null;
-  interestKey: string | null;
   topic: string | null;
   score: number | null;
-  updatedAt: string | null;
+  /** When Engram last REWROTE this memory, in ms. Meaningful because both topics are bounded: a memory
+   *  is revised in place as the trail or interest evolves, so this is "when my understanding last
+   *  changed", not "when this row was created". */
+  updatedAt: number | null;
+}
+
+/** ISO-8601 -> ms. Defensive like the rest of this client: an unparseable or absent stamp is null, not NaN. */
+function parseTs(v: unknown): number | null {
+  if (typeof v !== 'string') return null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : null;
 }
 
 /** Raw semantic search over the user's Engram memories. Returns hits with topic + scope properties. */
@@ -93,10 +102,9 @@ export async function engramSearch(userId: string, query: string): Promise<Engra
   return items.map((m: any) => ({
     content: m?.content ?? m?.text ?? '',
     trailId: m?.properties?.trail_id ?? m?.trail_id ?? null,
-    interestKey: m?.properties?.interest_key ?? m?.interest_key ?? null,
     topic: m?.topic ?? null,
     score: typeof m?.score === 'number' ? m.score : null,
-    updatedAt: m?.updated_at ?? m?.updatedAt ?? null,
+    updatedAt: parseTs(m?.updated_at ?? m?.updatedAt ?? m?.created_at ?? m?.createdAt),
   }));
 }
 
@@ -114,7 +122,7 @@ export async function engramTrailMemory(userId: string, trailId: string, hint: s
   // next read once extraction lands. Borrowing the best label match instead cross-contaminates
   // (one trail showing another's recap), which is worse than a short wait for the real one.
   const scoped = hits
-    .filter((h) => h.trailId === trailId && !h.interestKey && (!h.topic || h.topic === TRAIL_TOPIC))
+    .filter((h) => h.trailId === trailId && (!h.topic || h.topic === TRAIL_TOPIC))
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   const best = scoped[0];
   if (DEBUG) {
@@ -124,70 +132,56 @@ export async function engramTrailMemory(userId: string, trailId: string, hint: s
   return content && content.length > 24 ? content : null;
 }
 
-/**
- * Assert a *qualifying* research interest to Engram, scoped by a stable `interest_key` so Engram
- * maintains one bounded, evolving memory per interest and reconciles/merges each assertion into it.
- * Only durable themes (gated locally) are ever asserted — Engram is fed signal, never the firehose.
- */
-// Circuit breaker: once we learn the interest topic/scope isn't configured in this Engram project,
-// stop asserting for the rest of the process. It's a permanent config gap, not a transient error —
-// retrying would just spam the endpoint (4x per checkpoint) with the same 400.
-let interestScopeUnavailable = false;
-
-export async function engramAssertInterest(
-  userId: string,
-  key: string,
-  contents: string[],
-): Promise<string | null> {
-  if (interestScopeUnavailable) return null;
-  const content = contents.map((s) => s.trim()).filter(Boolean).slice(0, 20);
-  if (!content.length) return null;
-  const res = await post('/memories', {
-    user_id: userId,
-    properties: { interest_key: key },
-    input: { string: { content } },
-  });
-  if (!res.ok) {
-    // A 400 naming interest_key means the ResearchInterest topic (scope: interest_key) doesn't
-    // exist in this project. Disable interest sync for the session and say so once — trails and
-    // search are unaffected, so this is a soft degradation, not a failure.
-    if (res.status === 400 && /interest_key|not configured/i.test(res.errorText)) {
-      interestScopeUnavailable = true;
-      console.error(
-        '[engram] interest sync disabled for this session: the ResearchInterest topic ' +
-        '(scope: interest_key) is not configured in your Engram project. Add it (see docs/engram.md) ' +
-        'to enable cross-trail interests. Trails, recaps, and search are unaffected.',
-      );
-    }
-    return null;
-  }
-  return res.json?.run_id ?? res.json?.runId ?? res.json?.id ?? null;
-}
-
-export interface Interest { key: string | null; content: string; score: number | null }
+export interface Interest { content: string; score: number | null; updatedAt: number | null }
 
 /**
- * Read back the interests Engram has synthesized (keyed by `interest_key`, or on the configured
- * ResearchInterest topic). Callers match these to their locally-gated themes to prefer Engram's
- * phrasing; the local gate — not this read — is what decides which themes count.
+ * The interests Engram has synthesized on the ResearchInterest topic. Its own topic description
+ * applies the durability rule and merges near-duplicates, so these are returned as-is — the caller
+ * does not re-gate them. Memories carry no scope property (the topic is user-scoped), which is why
+ * nothing here filters on one; requiring a property was what made this whole layer read as "local".
  */
+/**
+ * Retrieval probes, run together and unioned.
+ *
+ * There is no "list memories by topic" in the verified REST surface — the only way in is semantic
+ * search, which is RANKED. So a single query returns whichever interests are nearest that one phrasing
+ * and silently hides the rest: on a real account holding five ResearchInterest memories, the original
+ * single-query version returned two. Interests looked like they were barely forming when in fact they
+ * were barely being read.
+ *
+ * These deliberately approach from different angles — the standing summary, active decisions, active
+ * building, and recurrence — because that spread is what makes the union approximate "all of them".
+ * `/memories/search` is a free read (only `/memories` costs a pipeline run), so the extra probes cost
+ * nothing against the free-tier budget, and they run in parallel so they cost no extra latency either.
+ */
+const INTEREST_PROBES = [
+  'the user\'s main ongoing interests, themes, and projects',
+  'what the user is currently evaluating, comparing, or deciding between',
+  'what the user is learning, building, or investigating',
+  'recurring topics and themes the user returns to across many sessions',
+];
+
 export async function engramInterests(
   userId: string,
-  query = 'the user\'s main ongoing interests, themes, and projects',
+  probes: string[] = INTEREST_PROBES,
 ): Promise<Interest[]> {
   if (!ENGRAM_ENABLED) return [];
-  const hits = await engramSearch(userId, query);
+  const results = await Promise.all(probes.map((q) => engramSearch(userId, q)));
+
   const seen = new Set<string>();
   const out: Interest[] = [];
-  for (const h of hits) {
-    const key = h.interestKey;
-    // interest-layer memories: an explicit interest assertion, the configured topic, or a user-scoped
-    // memory that isn't a trail summary.
-    const isInterest = !!key || (INTEREST_TOPIC && h.topic === INTEREST_TOPIC) || (!h.trailId && h.topic !== TRAIL_TOPIC);
+  for (const h of results.flat()) {
+    // The configured interest topic, or — if it was renamed without setting TABZERO_INTEREST_TOPIC —
+    // any user-scoped memory that isn't a trail summary.
+    const isInterest = h.topic === INTEREST_TOPIC || (!h.trailId && h.topic !== TRAIL_TOPIC);
     const c = h.content?.trim();
     if (!isInterest || !c || seen.has(c)) continue;
     seen.add(c);
-    out.push({ key, content: c, score: h.score });
+    out.push({ content: c, score: h.score, updatedAt: h.updatedAt });
   }
+  // Best-scoring first, so the cap below drops the weakest rather than whichever probe happened to
+  // return last. Unscored hits sort last rather than winning by accident.
+  out.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  if (DEBUG) console.error(`[engram] interests: ${probes.length} probes -> ${out.length} distinct`);
   return out.slice(0, 12);
 }

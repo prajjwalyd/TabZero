@@ -4,8 +4,8 @@ Tab Zero works **without any key** — local trails, keyword search, categories,
 
 - **Engram authors your recaps** — instead of a local model, Engram's pipeline extracts and *reconciles* one evolving summary per trail from the raw browsing signal, and rewrites it as the trail grows.
 - **Semantic search** — resurrect a trail by meaning (*"that GPU I was looking at"*), not just keywords.
-- **Cross-trail research interests** — Engram synthesizes the durable themes you keep returning to (only the ones that clear the local durability gate are ever sent).
-- **Cross-agent memory** — the same reconciled memory any MCP agent (Claude Code, Codex, opencode…) can query.
+- **Cross-trail research interests** — Engram synthesizes the durable themes you keep returning to, deciding for itself which are durable enough to count (its topic description carries that rule).
+- **Cross-agent memory** — the same reconciled memory any agent (Claude Code, Codex, opencode…) can query through the `tabzero` CLI.
 
 Setup takes ~3 minutes and the free tier is plenty for personal use.
 
@@ -49,8 +49,12 @@ and visit patterns provided.
 |---|---|
 | **Name** | `ResearchInterest` |
 | **User-scoped** | **On** |
-| **Property scope** | add one: `interest_key` |
+| **Property scope** | **leave empty** — see the note below |
 | **Bounded** | **On** — one evolving memory per interest |
+
+> ⚠️ **Do not add a property scope to this topic.** Interests are derived from the very same per-trail
+> signal Tab Zero pushes for `TrailSummary` — one input can populate both topics. A required scope
+> property would mean nothing ever reaches `ResearchInterest`, and you would get no interests at all.
 
 **Description:**
 
@@ -72,7 +76,7 @@ Merge aggressively: when new browsing matches an existing interest, UPDATE and s
 than spawning a near-duplicate. One evolving memory per genuine interest.
 ```
 
-> Both are **user-scoped + property-scoped + bounded**, so Engram keeps exactly one evolving memory per `trail_id` / `interest_key` instead of piling up duplicates. Tab Zero already gates interests locally (a theme must be *recurring* or *deep* and still recent) and only asserts the survivors — so this topic is never fed the firehose. Rename the topics freely if you also set `TABZERO_TRAIL_TOPIC` / `TABZERO_INTEREST_TOPIC` to match.
+> `TrailSummary` is user-scoped **+ property-scoped on `trail_id` +** bounded, so Engram keeps exactly one evolving recap per trail. `ResearchInterest` is user-scoped **+** bounded only: it draws on every trail, so scoping it to one would defeat the point. Both descriptions do the real work — `ResearchInterest`'s is what tells Engram to form an interest only from a genuinely durable theme and to merge near-duplicates rather than pile them up, so Tab Zero shows what Engram returns without re-gating it. With no key set, Tab Zero falls back to listing your most durable individual trails and labels the result `local`. Rename the topics freely if you also set `TABZERO_TRAIL_TOPIC` / `TABZERO_INTEREST_TOPIC` to match.
 
 ## 3. Copy your API key
 
@@ -81,10 +85,10 @@ In the project settings, copy the **API key** (starts with `eng_…`).
 ## 4. Give it to Tab Zero
 
 ```bash
-npx tabzero key      # paste the eng_… key when prompted
+tabzero key          # paste the eng_… key when prompted
 ```
 
-Restart the daemon (`npx tabzero start`) and the memory layer lights up. Confirm it worked: the popup's status-dot tooltip shows `engram on`, and search results tagged **MEMORY** (green) are coming from Engram. Trail recaps show a local placeholder first, then **upgrade to Engram's `you`-toned recap** on the next read once its extraction lands (the pipeline is async).
+Restart the daemon (`tabzero start`) and the memory layer lights up. Confirm it worked: the popup's status-dot tooltip shows `engram on`, search results tagged **MEANING** (green) are coming from Engram, and the popup's **Interests** tab starts filling in. Trail recaps show a local placeholder first, then **upgrade to Engram's `you`-toned recap** on the next read once its extraction lands (the pipeline is async).
 
 ### Environment variables
 
@@ -103,7 +107,7 @@ Stored in `~/.tabzero/.env` (or the repo `.env` in dev):
 
 - **Tab Zero pushes RAW signal, not a finished summary** — the trail label plus one atomic fact per page (title · description · domain). Engram's pipeline does the extraction and bounded reconciliation, so the memory *evolves* as the trail recurs instead of being a blob we overwrite.
 - **Engram authors the recap.** `summarizeTrail` prefers Engram's reconciled memory; a local `claude -p` / heuristic recap is only a placeholder shown until Engram's version lands, then it's replaced.
-- **Interests are gated locally.** A trail/theme becomes an interest only if it's *recurring* (returned across ≥2 sessions) **or** *deep* (a big rabbit hole), **and** still recent. Only qualifying themes are asserted to Engram (`interest_key`-scoped), which then names/reconciles them. The MCP `research_interests` tool and `GET /interests` return these.
+- **Interests are Engram's judgement.** The `ResearchInterest` topic description tells it to form an interest only from a durable theme — recurring across trails/sessions, or a sustained investigation — and never from a one-off lookup or ephemeral browsing. It draws on the same per-trail signal already being pushed, so there is no separate assertion pass. Without a key, Tab Zero falls back to listing your most durable individual trails (recurring across ≥2 sessions, or ≥8 pages, and still recent) and reports `source: local`. `tabzero interests` and `GET /interests` return these.
 
 ## Fresh start / reset
 
@@ -121,5 +125,5 @@ Engram has **no delete-all** in its REST API, so a new `user_id` is how you get 
 - **Free tier:** 1,000 pipeline runs/month. Tab Zero pushes at trail/session grain (settle-gated + a per-trail re-push guard), never per tab — comfortably within budget for personal browsing.
 - **Privacy:** only page **titles**, **domains**, and the **public preview text** sites already publish (OpenGraph / meta description / the visible `h1`) are sent — never full page body, never anything you typed, never screenshots. Raw URLs stay local.
 - **Rebuildable:** the local DB (`~/.tabzero/tabzero.db`) is the source of truth, so your Engram memories can be fully replayed from it.
-- **Change the key later:** rerun `npx tabzero key`.
-- **MCP tools exposed:** `search_trails`, `get_trail`, `resurrect_trail`, `week_in_tabs`, `research_interests`.
+- **Change the key later:** rerun `tabzero key`.
+- **Agent commands exposed:** `tabzero search`, `tabzero trail`, `tabzero resurrect`, `tabzero week`, `tabzero interests` (add `--json`).

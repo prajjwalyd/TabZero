@@ -84,9 +84,15 @@ body {
 
 /* main scroll */
 main { overflow-y: auto; padding: 8px 14px 16px; flex: 1; }
-main::-webkit-scrollbar { width: 8px; }
-main::-webkit-scrollbar-thumb { background: #DDD9CE; border-radius: 8px; }
-main::-webkit-scrollbar-thumb:hover { background: #CFCBBE; }
+/* Chrome can't restyle a scrollbar without also changing its *kind*: a single ::-webkit-scrollbar
+   rule swaps the platform's overlay scrollbar (macOS — floats over the content and fades out when
+   idle) for the classic kind, which is always visible and reserves a permanent 8px gutter. So the
+   custom bar is scoped to platforms whose scrollbars are classic to begin with — Windows/Linux, and
+   macOS set to "always show scroll bars". Elsewhere the native fading one is left alone.
+   The class is set by popup.ts::markScrollbarMode. */
+.classic-scrollbars main::-webkit-scrollbar { width: 8px; }
+.classic-scrollbars main::-webkit-scrollbar-thumb { background: #DDD9CE; border-radius: 8px; }
+.classic-scrollbars main::-webkit-scrollbar-thumb:hover { background: #CFCBBE; }
 
 /* list bar (count + group toggle) */
 .list-bar { display: flex; align-items: center; justify-content: space-between; padding: 6px 18px 8px; }
@@ -155,3 +161,71 @@ main::-webkit-scrollbar-thumb:hover { background: #CFCBBE; }
 /* empty / offline */
 .empty, .down-msg { color: var(--muted); text-align: center; padding: 30px 22px; font-size: 12.5px; line-height: 1.65; }
 .down-msg code { background: var(--surface); border: 1px solid var(--border); padding: 2px 7px; border-radius: 6px; color: var(--accent); font-size: 11.5px; }
+
+/* ---- view swap ----
+   A short fade on the pane's new contents. This is not decoration: switching tabs used to clear the
+   pane and then await a fetch, so there was a visible blank flash on every switch. The swap is now a
+   single atomic replaceChildren, and this fade is what makes that one transition read as deliberate
+   rather than as a jump. Kept short — a slow fade would itself look like a flicker. */
+main.swap { animation: tz-swap .13s ease-out; }
+@keyframes tz-swap { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { main.swap { animation: none; } }
+
+/* ---- loading skeleton ----
+   Shown only when a view is opened before its data has been cached. It occupies roughly the height the
+   real content will, so the pane doesn't resize underneath the user when the fetch lands. */
+.skel { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; animation: tz-pulse 1.4s ease-in-out infinite; }
+.skel-row { height: 62px; margin-bottom: 8px; }
+.skel-card { height: 96px; }
+@media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
+
+/* ---- interests ----
+   Deliberately a flatter row than .trail: an interest is not clickable and has no detail to expand, so
+   giving it the same affordance as a trail card would promise an interaction that isn't there. */
+.interest { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; }
+/* No -webkit-line-clamp here, deliberately. The clamp paints its own ellipsis that cannot be suppressed,
+   so combining it with a toggle produced two ellipses and pushed `more…` onto its own line. The text is
+   truncated in JS instead (popup.ts::interestLabel), which leaves exactly one ellipsis — carried by the
+   inline toggle below, so the collapsed form reads as one continuous phrase: `…terminal ...more`. */
+.interest-label { font-size: 13px; font-weight: 550; line-height: 1.45; letter-spacing: -0.05px; }
+/* `display: inline` is what keeps it on the last line of text rather than starting a new block. */
+.more-btn {
+  display: inline; padding: 0; background: none; border: 0; cursor: pointer;
+  font: inherit; font-weight: 600; color: var(--accent); letter-spacing: .1px; white-space: nowrap;
+}
+.more-btn:hover { color: var(--accent-hover); text-decoration: underline; }
+/* Needed explicitly: `.more-btn { display: inline }` above outranks the UA's `[hidden] { display: none }`,
+   so without this the toggle stays visible when JS hides it. */
+.more-btn[hidden] { display: none; }
+.interest-detail { margin-top: 6px; font-size: 10.5px; color: var(--faint); letter-spacing: .2px; }
+.int-note { display: block; margin-top: 4px; color: var(--faint); }
+
+/* ---- delete confirmation ----
+   Inline on the row rather than a modal: confirm() from a popup is jarring and can be suppressed
+   outright, which would make a destructive action silent. */
+.danger-btn { color: var(--faint); }
+.danger-btn:hover { color: var(--danger); background: rgba(166,72,47,.07); }
+.confirm { margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--border); }
+.confirm-msg { font-size: 12px; color: var(--ink); line-height: 1.5; }
+.confirm-note { display: block; margin-top: 4px; font-size: 10.5px; color: var(--faint); line-height: 1.45; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 10px; }
+.confirm-cancel, .confirm-go {
+  font-family: var(--sans); font-size: 11.5px; font-weight: 550; padding: 5px 11px;
+  border-radius: 8px; cursor: pointer; border: 1px solid var(--border);
+}
+.confirm-cancel { background: none; color: var(--muted); }
+.confirm-cancel:hover { border-color: var(--border-2); color: var(--ink); }
+.confirm-go { background: var(--danger); border-color: var(--danger); color: #fff; }
+.confirm-go:hover { filter: brightness(1.06); }
+.confirm-go:disabled { opacity: .6; cursor: default; }
+
+/* ---- search legend ----
+   Explains the row tags once, above the results, so the pills read as shorthand rather than jargon.
+   Wraps to two lines at narrow widths on purpose — one item per line is more readable than a cramped
+   single row, and this only appears after pressing Enter. */
+.search-legend {
+  display: flex; flex-wrap: wrap; gap: 4px 14px;
+  padding: 2px 4px 12px; font-size: 11px; color: var(--faint); line-height: 1.5;
+}
+.legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.legend-text { letter-spacing: .1px; }

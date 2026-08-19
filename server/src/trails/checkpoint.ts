@@ -3,14 +3,14 @@
 // On zero we (1) snapshot the exact tabs open together as a resurrectable working set, (2) finalize
 // labels + recaps for those trails now, while context is freshest and the user has declared them
 // done, and (3) force-push them to Engram. Explicit intent = the right moment to spend the budget.
-import { db } from './db.js';
-import { canonicalize } from './canonical.js';
-import { getTrail, listTrails, labelTrail, summarizeTrail, syncInterests } from './trails.js';
+// Interests need no step here: Engram derives them from the very trail signal this flush sends.
+import { db } from '../core/db.js';
+import { canonicalize } from '../capture/canonical.js';
+import { getTrail, listTrails, labelTrail, summarizeTrail } from './trails.js';
 import { consolidateCategories } from './categories.js';
-import { flushEngram } from './sync.js';
-import { getUserId } from './db.js';
-import * as cfg from './config.js';
-import type { TrailDTO } from './types.js';
+import { flushEngram } from '../engram/sync.js';
+import * as cfg from '../core/config.js';
+import type { TrailDTO } from '../core/types.js';
 
 export interface ZeroResult {
   ok: true;
@@ -20,7 +20,6 @@ export interface ZeroResult {
   finalized: number;
   pushedToEngram: number;
   categoriesMerged: number;
-  interestsSynced: number;
   trails: TrailDTO[];
 }
 
@@ -65,9 +64,6 @@ export async function zeroCheckpoint(openUrls: string[]): Promise<ZeroResult> {
   // 4. Force-push everything stale to Engram right now (explicit intent bypasses the re-push guard).
   const { pushed } = await flushEngram({ force: true, limit: 50 });
 
-  // 5. Re-derive durable interests and assert the qualifying themes to Engram (gated, so no firehose).
-  const interestsSynced = await syncInterests(getUserId());
-
   const trailCount = (db.prepare('SELECT COUNT(*) c FROM trails WHERE page_count >= ?')
     .get(cfg.MIN_TRAIL_PAGES) as { c: number }).c;
 
@@ -79,7 +75,6 @@ export async function zeroCheckpoint(openUrls: string[]): Promise<ZeroResult> {
     finalized,
     pushedToEngram: pushed,
     categoriesMerged,
-    interestsSynced,
     trails: listTrails({ limit: 8 }),
   };
 }

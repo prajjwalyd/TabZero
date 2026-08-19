@@ -3,9 +3,9 @@
 // exponential backoff while the browser is quiet, and an immediate snap back to base the moment new
 // activity arrives (noteActivity, called on every ingested batch). The per-trail settle gate lives
 // in sync.ts — this layer only decides *how often to look*, never *what is eligible*.
-import * as cfg from './config.js';
-import { ENGRAM_ENABLED } from './config.js';
-import { enrichSettled, flushEngram } from './sync.js';
+import * as cfg from '../core/config.js';
+import { ENGRAM_ENABLED } from '../core/config.js';
+import { enrichSettled, flushEngram } from '../engram/sync.js';
 
 let enrichTimer: ReturnType<typeof setTimeout> | null = null;
 let engramTimer: ReturnType<typeof setTimeout> | null = null;
@@ -38,7 +38,7 @@ async function runEnrich(): Promise<void> {
   enrichTimer = null;
   enrichBusy = true;
   try {
-    const { processed, pending } = await enrichSettled(3, 1);
+    const { processed, pending } = await enrichSettled();
     // Back off only when nothing is pending at all — not when work exists but is still settling.
     enrichIdle = pending === 0 ? enrichIdle + 1 : 0;
     if (processed) console.log(`[enrich] updated ${processed} trail(s)`);

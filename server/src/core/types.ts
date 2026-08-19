@@ -1,4 +1,4 @@
-// Domain types shared across the backend + MCP server.
+// Domain types shared across the backend + CLI.
 // The extension talks to us over JSON so it keeps its own copy of the wire shapes.
 
 export type EventType = 'open' | 'activate' | 'navigate' | 'close' | 'meta';
@@ -37,10 +37,8 @@ export interface TrailRow {
   id: string;
   label: string;
   one_liner: string | null;
-  status: TrailStatus;
   created: number;
   last_active: number;
-  liveness: number;
   summary: string | null;
   summary_source: string | null; // 'engram' | 'local' | 'heuristic' — local/heuristic are placeholders
   summary_dirty: number;
@@ -54,7 +52,7 @@ export interface TrailRow {
   category: string | null; // LLM-assigned category key; null falls back to the heuristic
 }
 
-/** Trail as returned to the extension / MCP callers. */
+/** Trail as returned to the extension / CLI callers. */
 export interface TrailDTO {
   id: string;
   label: string;
@@ -81,4 +79,11 @@ export interface PageDTO {
 export interface TrailDetail extends TrailDTO {
   summary: string | null;
   pages: PageDTO[];
+  /**
+   * Exactly what a resurrect should reopen — checkpoint-aware and capped. Carried on the detail (a
+   * pure-SQL read, no LLM) so the fast path a client uses to render its reopen button is the SAME set
+   * the resurrect endpoint returns. `pages` is the trail's full history and is for DISPLAY only;
+   * reopening from it is what silently discarded the checkpoint logic before.
+   */
+  resurrectUrls: string[];
 }

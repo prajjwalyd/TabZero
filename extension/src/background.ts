@@ -1,6 +1,6 @@
 // Thin capture layer. MV3 service workers are ephemeral, so we do the minimum here:
 // observe tab events, buffer them, and forward batches to the local daemon (which owns all state).
-import { BACKEND, TOKEN } from './config.js';
+import { BACKEND, authHeaders } from './config.js';
 
 interface Ev {
   ts: number;
@@ -34,12 +34,15 @@ async function flush(): Promise<void> {
   try {
     const r = await fetch(`${BACKEND}/events`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-tabzero-token': TOKEN },
+      headers: await authHeaders(true),
       body: JSON.stringify({ events: batch }),
     });
     if (!r.ok) throw new Error(`status ${r.status}`);
+    // Delivered — drop the crash mirror. Leaving it behind let a later restore() re-adopt events
+    // that had already been ingested, duplicating them.
+    try { await chrome.storage.local.remove('tz_queue'); } catch { /* ignore */ }
   } catch {
-    // daemon down — put the batch back and persist so nothing is lost across SW death
+    // daemon down — put the batch back and mirror it so nothing is lost across SW death
     queue = batch.concat(queue);
     try { await chrome.storage.local.set({ tz_queue: queue.slice(-3000) }); } catch { /* ignore */ }
   } finally {
@@ -47,14 +50,24 @@ async function flush(): Promise<void> {
   }
 }
 
+/**
+ * Adopt the crash mirror after a service-worker restart.
+ *
+ * `tz_queue` is a MIRROR of this worker's in-memory queue, not a separate backlog — a failed flush
+ * writes the events to both. So adopting it while `queue` is non-empty concatenates events we already
+ * hold, and every failed-flush/restore cycle then DOUBLES the pending set: one page ended up with a
+ * visit_count of 436 from a single real visit (871 navigate events, one tab, one URL, zero URL
+ * changes). Only adopt when we have nothing in memory, which is exactly the case the mirror exists
+ * for: this worker was restarted and lost the queue.
+ */
 async function restore(): Promise<void> {
   try {
+    if (queue.length) return; // in-memory queue is authoritative; storage is its stale mirror
     const { tz_queue } = await chrome.storage.local.get('tz_queue');
-    if (Array.isArray(tz_queue) && tz_queue.length) {
-      queue = tz_queue.concat(queue);
-      await chrome.storage.local.remove('tz_queue');
-      void flush();
-    }
+    if (!Array.isArray(tz_queue) || !tz_queue.length) return;
+    queue = tz_queue;
+    await chrome.storage.local.remove('tz_queue');
+    void flush();
   } catch { /* ignore */ }
 }
 
@@ -84,7 +97,7 @@ chrome.tabs.onRemoved.addListener((tabId, info) => {
 async function doNuke(): Promise<{ closed: number; trails: number }> {
   let trails = 0;
   try {
-    const h = await (await fetch(`${BACKEND}/health`, { headers: { 'x-tabzero-token': TOKEN } })).json();
+    const h = await (await fetch(`${BACKEND}/health`)).json(); // /health needs no auth
     trails = h?.trails ?? 0;
   } catch { /* daemon down — still close the tabs */ }
 
@@ -100,7 +113,7 @@ async function doNuke(): Promise<{ closed: number; trails: number }> {
     .filter((u): u is string => !!u && /^https?:/.test(u) && u !== zeroUrl);
   void fetch(`${BACKEND}/zero`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-tabzero-token': TOKEN },
+    headers: await authHeaders(true),
     body: JSON.stringify({ openUrls }),
   }).catch(() => {});
   const url = chrome.runtime.getURL(`zero.html?closed=${closed}&trails=${trails}`);

@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { OPENROUTER_API_KEY, OPENROUTER_MODEL, CLAUDE_MODEL } from './config.js';
 
-export type LlmBackend = 'openrouter' | 'claude' | 'none';
+type LlmBackend = 'openrouter' | 'claude' | 'none';
 
 function detectBackend(): LlmBackend {
   if (OPENROUTER_API_KEY) return 'openrouter';

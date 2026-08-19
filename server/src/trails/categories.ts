@@ -4,8 +4,8 @@
 //   2. a *growable* vocabulary in the `categories` table, seeded from the fixed taxonomy below. The
 //      LLM (in labelTrail) reuses an existing key where it can and mints a new one only when a trail
 //      fits nothing — resolveCategory() enforces that reuse bias with a lexical novelty gate + ceiling.
-import { db } from './db.js';
-import * as cfg from './config.js';
+import { db } from '../core/db.js';
+import * as cfg from '../core/config.js';
 
 interface CategoryDef {
   key: string;
@@ -111,7 +111,7 @@ const SEED_LABEL: Record<string, string> = {
 // ---------- growable, table-backed vocabulary ----------
 
 // In-process cache of the vocabulary, lazily loaded and refreshed on mint/consolidate. The daemon
-// owns all writes; the MCP process only reads (filter help), so cross-process staleness of a
+// owns all writes; every other reader goes through it over HTTP, so cross-process staleness of a
 // freshly-minted key is cosmetic (it just isn't offered as a filter until that process restarts).
 let keyCache: Set<string> | null = null;
 let labelCache: Map<string, string> | null = null;

@@ -9,7 +9,7 @@
 // console if you want the storage/quota back. Imports ONLY config (never db.ts) so nothing recreates
 // the file we're deleting.
 import { existsSync, rmSync } from 'node:fs';
-import { DB_PATH, ENGRAM_ENABLED, USER_ID } from './config.js';
+import { DB_PATH, ENGRAM_ENABLED, USER_ID } from '../core/config.js';
 
 let removed = 0;
 for (const suffix of ['', '-wal', '-shm']) {
