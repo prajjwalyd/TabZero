@@ -15,10 +15,12 @@ const tmp = mkdtempSync(join(tmpdir(), 'tabzero-pipe-'));
 process.env.TABZERO_DATA = tmp;
 process.env.TABZERO_USER_ID = 'test-user';
 process.env.ENGRAM_API_KEY = ''; // keep Engram unreachable even if a real key sits in .env
+process.env.TABZERO_RESURRECT_MAX_TABS = '5'; // small deterministic cap so the selection assertions below are readable
 
 const { ingestEvent } = await import('../src/capture/pipeline.ts');
 const { db } = await import('../src/core/db.ts');
-const { resurrectUrls } = await import('../src/trails/trails.ts');
+const { resurrectUrls, getTrailDetail } = await import('../src/trails/trails.ts');
+const { RESURRECT_MAX_TABS: MAX } = await import('../src/core/config.ts');
 
 after(() => rmSync(tmp, { recursive: true, force: true }));
 
@@ -71,17 +73,21 @@ test('clustering: opener graph and lexical similarity each join a page, unrelate
 });
 
 test('a re-delivered batch cannot inflate visit_count (regression: one real visit read as 436)', () => {
-  const url = 'https://accounts.example.com/v3/signin/identifier?continue=https%3A%2F%2Fx';
-  const canonical = 'https://accounts.example.com/v3/signin/identifier?continue=https%3A%2F%2Fx';
+  // The real page was a Google sign-in screen. It cannot be used as the fixture any more, because
+  // redact.ts::isSensitiveUrl now refuses to capture auth flows at all — which is a second, independent
+  // fix for the same incident. So this is a non-auth analogue with the same token structure; the replay
+  // behaviour under test is a property of the timestamp guard, not of the URL.
+  const url = 'https://accounts.example.com/v3/profile/identifier?continue=https%3A%2F%2Fx';
+  const canonical = 'https://accounts.example.com/v3/profile/identifier?continue=https%3A%2F%2Fx';
   const tabId = 900;
 
   // The exact event shape the real log showed: one page load emits several ticks, then the tab closes.
   const cycle = () => {
     ingestEvent({ ts: T0, type: 'open', tabId, windowId: 2 });
     ingestEvent({ ts: T0, type: 'activate', tabId, windowId: 2 });
-    nav(tabId, url, 'Sign in', T0 + 1);
-    ingestEvent({ ts: T0 + 2, type: 'meta', tabId, windowId: 2, url, title: 'Sign in', description: null });
-    nav(tabId, url, 'Sign in', T0 + 3);
+    nav(tabId, url, 'Account profile', T0 + 1);
+    ingestEvent({ ts: T0 + 2, type: 'meta', tabId, windowId: 2, url, title: 'Account profile', description: null });
+    nav(tabId, url, 'Account profile', T0 + 3);
     ingestEvent({ ts: T0 + 7000, type: 'close', tabId, windowId: 2 });
   };
 
@@ -95,25 +101,28 @@ test('a re-delivered batch cannot inflate visit_count (regression: one real visi
   assert.equal(visitsOf(canonical), 1, 'replayed events must never count as new visits');
 
   // A genuinely later return to the page still counts.
-  nav(tabId, url, 'Sign in', T0 + 86_400_000);
+  nav(tabId, url, 'Account profile', T0 + 86_400_000);
   assert.equal(visitsOf(canonical), 2, 'a real later revisit must still be counted');
 });
 
 // The recency bonus is worth 0.15 against a 0.26 threshold, so it decides borderline merges on its
 // own. It must only apply when the trail was active BEFORE the incoming page. Out-of-order events
 // inside one batch are routine, and an unguarded `ev.ts - last_active < WINDOW` is true for every
-// negative delta — which merged a van-electrical page into a Google sign-in trail on the strength of
+// negative delta — which merged a van-electrical page into an unrelated trail on the strength of
 // one incidental shared token ("example"), scoring 0.1690 + 0.15.
 test('a trail active AFTER an incoming page gets no recency bonus (no backwards merge)', () => {
-  nav(700, 'https://accounts.example.com/v3/signin/identifier?continue=z', 'Sign in', T0 + 500_000);
-  nav(700, 'https://accounts.example.com/v3/signin/identifier?continue=z', 'Sign in', T0 + 86_400_000);
-  const signin = trailOf('https://accounts.example.com/v3/signin/identifier?continue=z');
+  // Non-auth analogue of the real fixture (a Google sign-in page), which redact.ts now excludes from
+  // capture entirely. Measured cosine against the astronomy page below is 0.1826 — identical to the
+  // original — so the +0.15 bonus is still exactly what decides the merge, which is the whole point.
+  nav(700, 'https://accounts.example.com/v3/profile/identifier?continue=z', 'Account profile', T0 + 500_000);
+  nav(700, 'https://accounts.example.com/v3/profile/identifier?continue=z', 'Account profile', T0 + 86_400_000);
+  const other = trailOf('https://accounts.example.com/v3/profile/identifier?continue=z');
 
   // Older than that trail's last_active, and sharing exactly one incidental token with it ("example"
   // from the domain). Vocabulary is kept disjoint from every other fixture in this file so the
   // assertion can only fail for the reason under test.
   nav(701, 'https://astronomy.example.com/telescopes/collimation-guide', 'Collimation Guide For Newtonian Telescopes', T0 + 400_000);
-  assert.notEqual(trailOf('https://astronomy.example.com/telescopes/collimation-guide'), signin,
+  assert.notEqual(trailOf('https://astronomy.example.com/telescopes/collimation-guide'), other,
     'a weak lexical match must not be promoted by a bonus the trail did not earn');
 });
 
@@ -148,4 +157,115 @@ test('resurrection prefers the checkpoint working set over the full trail histor
   // A trail that was never checkpointed has nothing better than its own history.
   const other = trailOf('https://allrecipes.com/recipe/sourdough-starter')!;
   assert.deepEqual(resurrectUrls(other), ['https://allrecipes.com/recipe/sourdough-starter']);
+});
+
+/**
+ * Selection fixtures are written straight to `pages`, not driven through ingestion: what is under test
+ * is which rows survive the resurrect cap, and routing 30 pages through the clusterer just to get them
+ * into one trail would make the assertion depend on lexical scoring it isn't about.
+ */
+function seedTrail(id: string, pages: { slug: string; ts: number; dwellMs: number }[]): void {
+  db.prepare(
+    `INSERT INTO trails (id, label, created, last_active, page_count, session_count)
+     VALUES (?, ?, ?, ?, ?, 1)`,
+  ).run(id, id, T0, T0, pages.length);
+  const ins = db.prepare(
+    `INSERT INTO pages (canonical_url, url, title, domain, first_seen, last_seen, visit_count, total_dwell_ms, trail_id)
+     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+  );
+  for (const p of pages) {
+    const u = `https://${id}.example.com/${p.slug}`;
+    ins.run(u, u, p.slug, `${id}.example.com`, p.ts, p.ts, p.dwellMs, id);
+  }
+}
+const urlIn = (id: string, slug: string) => `https://${id}.example.com/${slug}`;
+
+// A trail nobody ever zeroed still has to be safe to resurrect. Its whole history is all we know, and
+// handing that back whole dumps every dead end the user deliberately closed back onto them. So the cap
+// PICKS: newest first. The bug this pins was the opposite — `ORDER BY last_seen ASC` with the cap
+// applied by the caller's `slice(0, n)` kept the OLDEST n and dropped everything current.
+test('an uncheckpointed trail reopens a capped, most-recent slice — not its whole history', () => {
+  const n = MAX + 6;
+  seedTrail('tcap', Array.from({ length: n }, (_, i) => ({ slug: `p${i}`, ts: T0 + i * 1000, dwellMs: 60_000 })));
+
+  const urls = resurrectUrls('tcap');
+  assert.equal(urls.length, MAX, `must not hand back all ${n} pages`);
+  assert.deepEqual(
+    urls,
+    Array.from({ length: MAX }, (_, k) => urlIn('tcap', `p${n - MAX + k}`)),
+    'the newest pages under the cap, returned oldest-first for reading order',
+  );
+  assert.ok(!urls.includes(urlIn('tcap', 'p0')), 'the oldest page must not survive the cap');
+});
+
+// Recency alone would let a run of one-second bounces evict the page you actually sat and read.
+test('under the cap, a page you actually read outranks a newer bounce', () => {
+  const read = { slug: 'read', ts: T0, dwellMs: 120_000 };            // oldest, but two minutes of dwell
+  const bounces = Array.from({ length: MAX }, (_, i) => ({ slug: `bounce${i}`, ts: T0 + (i + 1) * 1000, dwellMs: 900 }));
+  seedTrail('tbounce', [read, ...bounces]);
+
+  const urls = resurrectUrls('tbounce');
+  assert.equal(urls.length, MAX);
+  assert.ok(urls.includes(urlIn('tbounce', 'read')), 'the page actually read keeps its seat despite being oldest');
+  assert.ok(!urls.includes(urlIn('tbounce', 'bounce0')), 'the oldest bounce is what the cap sheds');
+});
+
+/**
+ * The contract the popup depends on, and the gap that let the real bug ship: `resurrectUrls` was
+ * correct and tested, while the only UI that reopens tabs built its list from `detail.pages` — the full
+ * history — so every resurrect ignored the checkpoint working set and the cap alike. Testing the
+ * function directly could never catch that. This pins the DETAIL payload instead: the reopen set rides
+ * on it, already narrowed, so the fast path a client renders from is the same set the resurrect
+ * endpoint returns.
+ */
+test('trail detail carries the reopen set, narrowed — not just the full page history', async () => {
+  seedTrail('tdetail', Array.from({ length: MAX + 4 }, (_, i) => ({ slug: `p${i}`, ts: T0 + i * 1000, dwellMs: 60_000 })));
+
+  const d = await getTrailDetail('tdetail');
+  assert.ok(d, 'detail should resolve');
+  assert.deepEqual(d!.resurrectUrls, resurrectUrls('tdetail'), 'detail must expose exactly what a resurrect would reopen');
+  assert.equal(d!.resurrectUrls.length, MAX);
+  assert.ok(
+    d!.pages.length > d!.resurrectUrls.length,
+    '`pages` is the wider display history: a client that reopens it bypasses the checkpoint logic and the cap',
+  );
+});
+
+// Deleting a trail has to remove what CONSTITUTES it, not just the trail row. Leaving the pages or the
+// event rows behind would make this a cosmetic hide — and worse, a replay of the log would resurrect the
+// trail the user asked to be rid of.
+test('deleting a trail removes its pages, its events, and its checkpoint membership', async () => {
+  const { deleteTrail } = await import('../src/trails/trails.ts');
+  const a = 'https://origami.example.net/folds/kabuto-helmet';
+  const b = 'https://origami.example.net/folds/kusudama-modular';
+  nav(820, a, 'Folding A Kabuto Helmet', T0 + 700_000);
+  nav(820, b, 'Kusudama Modular Instructions', T0 + 760_000);
+  const id = trailOf(a)!;
+  assert.ok(id, 'fixture trail exists');
+
+  // MEASURED, not assumed: fixtures in this file share a synthetic domain space, so a new pair can
+  // legitimately cluster into an existing trail (an earlier version of this test used `drysuit-sizing`,
+  // which joined the vanlife trail via `sizing` + `example`). What is under test is that delete removes
+  // exactly what the trail holds — so read that first and assert against it.
+  const pagesBefore = (db.prepare('SELECT COUNT(*) c FROM pages WHERE trail_id = ?').get(id) as { c: number }).c;
+  const eventsBefore = (db.prepare(
+    'SELECT COUNT(*) c FROM events WHERE canonical_url IN (SELECT canonical_url FROM pages WHERE trail_id = ?)',
+  ).get(id) as { c: number }).c;
+  assert.ok(pagesBefore >= 2, 'the fixture pages landed in one trail');
+  assert.ok(eventsBefore > 0, 'its events are in the log to begin with');
+
+  const res = deleteTrail(id)!;
+  assert.equal(res.pages, pagesBefore, 'every page the trail held was counted');
+  assert.equal(res.events, eventsBefore, 'every matching event row removed');
+
+  const gone = (sql: string) => (db.prepare(sql).get(id) as { c: number }).c;
+  assert.equal(gone('SELECT COUNT(*) c FROM trails WHERE id = ?'), 0, 'trail row gone');
+  assert.equal(gone('SELECT COUNT(*) c FROM pages WHERE trail_id = ?'), 0, 'page rows gone');
+  assert.equal(gone('SELECT COUNT(*) c FROM checkpoint_pages WHERE trail_id = ?'), 0, 'checkpoint rows gone');
+  // The urls must be unreachable from the log too, or a replay rebuilds the trail.
+  assert.equal(
+    (db.prepare('SELECT COUNT(*) c FROM events WHERE canonical_url = ?').get(a) as { c: number }).c, 0,
+    'no event still references the deleted page',
+  );
+  assert.equal(deleteTrail(id), null, 'deleting an already-deleted trail is a clean miss, not a throw');
 });

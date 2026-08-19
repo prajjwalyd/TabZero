@@ -43,6 +43,7 @@
     "backend:dev": "NODE_NO_WARNINGS=1 tsx watch server/src/index.ts",
     "seed": "NODE_NO_WARNINGS=1 tsx server/src/scripts/seed.ts",
     "reset": "NODE_NO_WARNINGS=1 tsx server/src/scripts/reset.ts",
+    "repair": "NODE_NO_WARNINGS=1 tsx server/src/scripts/repair.ts",
     "build:server": "tsc -p server/tsconfig.json",
     "build:ext": "cd extension && node build.mjs",
     "watch:ext": "cd extension && node build.mjs --watch",

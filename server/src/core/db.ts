@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import { DB_PATH, USER_ID } from './config.js';
+import { DB_PATH, USER_ID, hardenPath } from './config.js';
 
 export const db = new DatabaseSync(DB_PATH);
 
@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS events (
   url           TEXT,
   canonical_url TEXT,
   title         TEXT,
-  favicon       TEXT
+  favicon       TEXT,
+  description   TEXT
 );
 -- Deliberately unindexed. events is an append-only log written on every captured tab event, and the
 -- single query that reads it back (trails.ts::weekInTabs) is a bounded ORDER BY id DESC LIMIT scan
@@ -100,6 +101,19 @@ if (!pageCols.some((c) => c.name === 'description')) {
   db.exec('ALTER TABLE pages ADD COLUMN description TEXT');
 }
 
+// Migration: log the page description alongside the title.
+//
+// This closes a real gap in the central claim that "the raw log is the source of truth, so everything
+// derived is rebuildable by replaying it". It wasn't: `meta` events carry an og:description, that
+// description lands in pages.description, and it feeds BOTH the trail centroid (via tokenize) and the
+// signal pushed to Engram — but it was never written to the log. A replay therefore produced weaker
+// vectors and thinner memories than the original run, silently. Logging it makes the claim true for
+// everything captured from here on; rows written before this migration keep a NULL.
+const eventCols = db.prepare('PRAGMA table_info(events)').all() as unknown as { name: string }[];
+if (!eventCols.some((c) => c.name === 'description')) {
+  db.exec('ALTER TABLE events ADD COLUMN description TEXT');
+}
+
 // Migration: add trails.category for the LLM-refined category (heuristic is the fallback).
 const trailCols = db.prepare('PRAGMA table_info(trails)').all() as unknown as { name: string }[];
 if (!trailCols.some((c) => c.name === 'category')) {
@@ -128,6 +142,12 @@ function setMeta(key: string, value: string): void {
   db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, value);
 }
 
+// Owner-only, every start. These three files ARE the browsing history — and the -wal is not an
+// afterthought: it holds the most recent writes, so leaving it 0644 while the main DB is 0600 would
+// still expose the newest pages. SQLite creates -wal/-shm itself, under the process umask (022 by
+// default = world-readable), so they have to be clamped after the connection opens, not before.
+for (const p of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) hardenPath(p);
+
 /**
  * The user/Engram scope. An explicit `TABZERO_USER_ID` always wins (pin an identity, or switch to a
  * clean slate); otherwise a stable random id is generated once and reused forever. Never a device
@@ -145,7 +165,8 @@ export function getUserId(): string {
 
 /**
  * The next trail id — a short, agent-friendly `t_<n>` (e.g. `t_42`) instead of a random hash, so an
- * agent can pass it back to `get_trail`/`resurrect_trail` without fumbling an 8-char hex. The counter
+ * agent can pass it straight back to `tabzero resurrect <id>` / `GET /trails/<id>` without fumbling an
+ * 8-char hex. The counter
  * is monotonic and never recycles a number within a user scope (a deleted trail's id is not reused),
  * which keeps it a safe stable key for Engram memories scoped by `trail_id`. It only restarts on a
  * full DB wipe (`pnpm reset`), which also mints a fresh user_id / clean Engram scope. Single-writer

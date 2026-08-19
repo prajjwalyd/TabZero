@@ -159,7 +159,25 @@ Env vars (all optional). In dev they load from `.env` at the repo root; installe
 | `TABZERO_ENGRAM_TIMEOUT_MS` | `15000` | Hard cap on any Engram call so a slow endpoint can't hang the daemon |
 | `TABZERO_DEBUG` | — | Set to `1` for verbose Engram retrieval logs |
 
-Data lives in `./.tabzero/tabzero.db` (SQLite, WAL) in dev, or `~/.tabzero/tabzero.db` when installed. The daemon binds `127.0.0.1` only, sends no CORS headers (so no web page can read your trails), and authenticates the extension with a per-install random token it hands out on `/health`. Because the raw log is the source of truth, your Engram project is fully rebuildable by replaying it.
+Data lives in `./.tabzero/tabzero.db` (SQLite, WAL) in dev, or `~/.tabzero/tabzero.db` when installed. Because the raw log is the source of truth, your Engram project is fully rebuildable by replaying it.
+
+The daemon guards that database with four things, and it needs all four:
+
+- **binds `127.0.0.1` only** — never `0.0.0.0`, so nothing on your network can reach it;
+- **a per-install random token** (`randomUUID`, stored `0600`) on every route but `/health` — not a shared constant, so one leaked token isn't every install;
+- **no CORS headers**, so a web page can send a request but cannot read the reply;
+- **a `Host` allowlist** rejecting anything but loopback. This is what stops **DNS rebinding**: a page on `evil.com` re-resolved to `127.0.0.1` arrives as *same-origin*, where CORS is never consulted — so "no CORS headers" alone would have let it read `/health` and take the token. `server/test/http.test.ts` pins this.
+
+Bodies are capped at 4MB and malformed JSON is a `400`. Note that anything already holding the token can read and write your trails — treat it like a credential.
+
+On disk, the data dir is `0700` and the database, its `-wal`/`-shm`, the token, and `.env` are all `0600`, re-applied on every start (the default umask would create them world-readable). `ENGRAM_BASE` must be `https://` — it's checked at boot, because every Engram request carries your API key alongside your page titles.
+
+**Two privacy layers sit in front of anything leaving the device**, separate from URL canonicalization (which is only a dedup key, never a privacy filter):
+
+- **Auth flows are never captured.** Sign-in, OAuth, password-reset, email-verification and checkout pages are dropped before anything is written.
+- **Secrets are stripped from what is captured.** `?token=`, `?code=`, `?email=`, session ids, presigned signatures and high-entropy values become `REDACTED`. Your search queries are deliberately preserved — they're the most useful signal a trail has.
+- **Titles and descriptions are scrubbed before they reach an LLM or Engram** — email addresses, JWTs, card-shaped numbers, encoded blobs. The topic itself is left intact, because a recap without specifics is worthless.
+- Page titles are treated as **untrusted input** in every prompt, since a site chooses its own title and could otherwise attempt prompt injection against a recap that agents later read.
 
 ---
 

@@ -13,6 +13,9 @@ interface Trail {
 }
 interface Hit { trail: Trail; why: 'semantic' | 'keyword'; snippet?: string }
 interface Stat { key: string; label: string; value: string; detail?: string }
+interface Week { headline: string; stats: Stat[] }
+/** `source` is load-bearing: 'engram' is real cross-trail synthesis, 'local' is a weaker stand-in. */
+interface Interests { source: 'engram' | 'local'; interests: { label: string; detail?: string }[] }
 
 // Display order + labels for category grouping (mirrors server/src/trails/categories.ts).
 const CAT_ORDER = ['dev', 'learning', 'news', 'social', 'media', 'shopping', 'travel', 'finance', 'work', 'projects', 'general'];
@@ -37,10 +40,51 @@ function rel(ts: number): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
-let view: 'trails' | 'week' = 'trails';
+type View = 'trails' | 'week' | 'interests';
+let view: View = 'trails';
 let groupBy = false;
 /** Last list fetched from /trails, so typing can filter it client-side with no network call. */
 let loaded: Trail[] = [];
+
+/**
+ * Per-view data cache — the reason switching tabs no longer flickers.
+ *
+ * Every renderer used to do `main.innerHTML = ''` and THEN await its fetch, so the pane sat visibly
+ * empty for the whole round trip and the content popped in afterwards. Switching tabs flashed blank
+ * every single time, including back to a view already seen a second earlier.
+ *
+ * Now a view paints from cache synchronously, and the network call only ever *replaces* what is
+ * already on screen. Combined with paint()'s single atomic swap, there is no frame in which the pane
+ * is empty.
+ */
+const cache: { trails: Trail[] | null; week: Week | null; interests: Interests | null } =
+  { trails: null, week: null, interests: null };
+/** Signature of what is currently painted per view, so identical data never triggers a repaint. */
+const painted: Record<View, string> = { trails: '', week: '', interests: '' };
+/** Guards against a slow response for one view landing after the user has switched to another. */
+let viewSeq = 0;
+
+const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/**
+ * Swap the pane's contents in ONE operation. `replaceChildren` on a pre-built fragment means the
+ * browser never paints an intermediate empty state — which is exactly what the old
+ * clear-then-append-later pattern did.
+ */
+function paint(build: (out: DocumentFragment) => void): void {
+  const frag = document.createDocumentFragment();
+  build(frag);
+  const main = $('main');
+  main.replaceChildren(frag);
+  // Any paint invalidates every view's signature, and only repaint() re-claims one. Without this,
+  // search results (which paint into the same pane) would leave `painted.trails` still matching the
+  // trail list, so switching back to Trails would skip the repaint and leave the results on screen.
+  painted.trails = painted.week = painted.interests = '';
+  if (REDUCED_MOTION) return;
+  main.classList.remove('swap');
+  void main.offsetWidth; // force a reflow so the animation restarts on every swap
+  main.classList.add('swap');
+}
 
 /**
  * Flag whether this platform uses classic (always-visible, gutter-reserving) scrollbars, so popup.css
@@ -65,9 +109,12 @@ async function init(): Promise<void> {
   $('gtIco').innerHTML = iconSvg('stack', 13);
 
   await refresh();
+  void prefetch(); // warm the other tabs so the FIRST switch is instant too, not just repeat visits
   document.querySelectorAll<HTMLElement>('.seg').forEach((t) =>
     t.addEventListener('click', () => {
-      view = t.dataset.view as 'trails' | 'week';
+      const next = t.dataset.view as View;
+      if (next === view) return; // re-clicking the active tab must not trigger a pointless repaint
+      view = next;
       document.querySelectorAll('.seg').forEach((x) => x.classList.remove('active'));
       t.classList.add('active');
       void render();
@@ -89,6 +136,20 @@ async function init(): Promise<void> {
   });
 }
 
+/**
+ * Load the views the user is not looking at yet, in the background.
+ *
+ * `/week` is local and quick; `/interests` can involve an Engram round trip with a 15s ceiling, so it
+ * must never sit on a path the user is waiting on. Doing it here means the tab is already warm by the
+ * time they click it, and a failure is silent — render() will simply try again on demand.
+ */
+async function prefetch(): Promise<void> {
+  try { cache.week ??= (await api.get('/week')) as Week; } catch { /* render() retries on demand */ }
+  if (view === 'week') paintView(); // they got there before we did — upgrade the skeleton in place
+  try { cache.interests ??= (await api.get('/interests')) as Interests; } catch { /* as above */ }
+  if (view === 'interests') paintView();
+}
+
 // Extension-wide refresh: re-check the backend, tab count, and re-render the current view.
 let refreshing = false;
 async function refresh(): Promise<void> {
@@ -100,6 +161,11 @@ async function refresh(): Promise<void> {
     const h = await api.get('/health');
     setStatus(true, h);
     void updateTabCount();
+    // Explicit refresh means "get me current data" — drop the caches for the views we are not about
+    // to re-fetch, so switching to one afterwards doesn't hand back a pre-refresh snapshot.
+    if (view !== 'trails') cache.trails = null;
+    if (view !== 'week') cache.week = null;
+    if (view !== 'interests') cache.interests = null;
     const q = view === 'trails' ? ($('search') as HTMLInputElement).value.trim() : '';
     if (q) await runSearch(q);
     else await render();
@@ -126,54 +192,168 @@ async function updateTabCount(): Promise<void> {
   } catch { $('tabCount').textContent = '–'; }
 }
 
+/**
+ * Switch to / refresh the current view without ever showing an empty pane.
+ *
+ * Order matters: paint whatever is cached FIRST (synchronously), then fetch, then repaint only if the
+ * data actually changed. On a cold view there is nothing to paint, so a skeleton of the right shape
+ * stands in — never a blank box that resizes when content lands.
+ */
 async function render(): Promise<void> {
+  const seq = ++viewSeq;
   const isTrails = view === 'trails';
   $('searchWrap').style.display = isTrails ? 'block' : 'none';
-  if (view === 'week') { $('listBar').style.display = 'none'; return renderWeek(); }
-  const main = $('main');
-  main.innerHTML = '';
-  const { trails } = await api.get('/trails');
-  const list = (trails as Trail[]) || [];
-  loaded = list;
+  if (!isTrails) $('listBar').style.display = 'none';
 
+  const hadCache = paintView();
+  if (!hadCache) paintSkeleton();
+
+  try {
+    if (view === 'trails') cache.trails = ((await api.get('/trails')).trails as Trail[]) || [];
+    else if (view === 'week') cache.week = (await api.get('/week')) as Week;
+    else cache.interests = (await api.get('/interests')) as Interests;
+  } catch {
+    // Only surface the failure if there was nothing to show; otherwise leave the cached view in place.
+    if (seq === viewSeq && !hadCache) {
+      paint((o) => o.appendChild(el('div', 'empty', 'Couldn’t load that — is the backend running?')));
+    }
+    return;
+  }
+  if (seq !== viewSeq) return; // the user switched away mid-flight; do not clobber their current view
+  if (view === 'trails') loaded = cache.trails!;
+  paintView();
+}
+
+/** Paint the current view from cache. False when nothing is cached yet. */
+function paintView(): boolean {
+  if (view === 'trails') {
+    if (!cache.trails) return false;
+    return repaint('trails', cache.trails, () => paintTrails(cache.trails!));
+  }
+  if (view === 'week') {
+    if (!cache.week) return false;
+    return repaint('week', cache.week, () => paintWeek(cache.week!));
+  }
+  if (!cache.interests) return false;
+  return repaint('interests', cache.interests, () => paintInterests(cache.interests!));
+}
+
+/**
+ * Repaint only when the data differs from what is already on screen. Without this, every fetch
+ * repaints identical content — a second visible swap for no reason, which reads as a flicker of its
+ * own on an explicit refresh.
+ */
+function repaint(key: View, data: unknown, build: () => void): boolean {
+  const sig = JSON.stringify(data);
+  if (painted[key] === sig) return true;
+  build();            // paint() clears all signatures as it swaps...
+  painted[key] = sig; // ...so claim this one afterwards, not before
+  return true;
+}
+
+/** Placeholder of roughly the right shape, so a cold view doesn't jump when real content arrives. */
+function paintSkeleton(): void {
+  const rows = view === 'week' ? 4 : 3;
+  paint((out) => {
+    const wrap = el('div', view === 'week' ? 'stats' : undefined);
+    for (let i = 0; i < rows; i++) wrap.appendChild(el('div', view === 'week' ? 'skel skel-card' : 'skel skel-row'));
+    out.appendChild(wrap);
+  });
+}
+
+function paintTrails(list: Trail[]): void {
   const bar = $('listBar');
   bar.style.display = list.length ? 'flex' : 'none';
   $('listCount').textContent = `${list.length} trail${list.length === 1 ? '' : 's'}`;
 
-  if (!list.length) {
-    main.appendChild(el('div', 'empty', 'No trails yet. Browse a little — Tab Zero reconciles your open tabs into research trails automatically.'));
-    return;
-  }
+  paint((out) => {
+    if (!list.length) {
+      out.appendChild(el('div', 'empty', 'No trails yet. Browse a little — Tab Zero reconciles your open tabs into research trails automatically.'));
+      return;
+    }
 
-  // Always newest-first.
-  const sorted = list.slice().sort((a, b) => b.lastActive - a.lastActive);
+    // Always newest-first.
+    const sorted = list.slice().sort((a, b) => b.lastActive - a.lastActive);
 
-  if (!groupBy) {
-    // Flat, latest-first — each row carries a category pill.
-    for (const t of sorted) main.appendChild(trailRow(t, undefined, undefined, true));
-    return;
-  }
+    if (!groupBy) {
+      // Flat, latest-first — each row carries a category pill.
+      for (const t of sorted) out.appendChild(trailRow(t, undefined, undefined, true));
+      return;
+    }
 
-  // Grouped by category; groups ordered by their most-recent trail. The header names the
-  // category, so rows inside a group don't repeat it as a pill.
-  const groups = new Map<string, Trail[]>();
-  for (const t of sorted) {
-    const k = CAT_ORDER.includes(t.category) ? t.category : 'general';
-    (groups.get(k) ?? groups.set(k, []).get(k)!).push(t);
-  }
-  const keys = [...groups.keys()].sort((a, b) => {
-    const ra = Math.max(...groups.get(a)!.map((t) => t.lastActive));
-    const rb = Math.max(...groups.get(b)!.map((t) => t.lastActive));
-    return rb - ra || CAT_ORDER.indexOf(a) - CAT_ORDER.indexOf(b);
+    // Grouped by category; groups ordered by their most-recent trail. The header names the
+    // category, so rows inside a group don't repeat it as a pill.
+    const groups = new Map<string, Trail[]>();
+    for (const t of sorted) {
+      const k = CAT_ORDER.includes(t.category) ? t.category : 'general';
+      (groups.get(k) ?? groups.set(k, []).get(k)!).push(t);
+    }
+    const keys = [...groups.keys()].sort((a, b) => {
+      const ra = Math.max(...groups.get(a)!.map((t) => t.lastActive));
+      const rb = Math.max(...groups.get(b)!.map((t) => t.lastActive));
+      return rb - ra || CAT_ORDER.indexOf(a) - CAT_ORDER.indexOf(b);
+    });
+    for (const k of keys) {
+      const items = groups.get(k)!;
+      const head = el('div', 'cat-head');
+      head.appendChild(el('span', 'cat-label', CAT_LABEL[k] || k));
+      head.appendChild(el('span', 'cat-count', String(items.length)));
+      out.appendChild(head);
+      for (const t of items) out.appendChild(trailRow(t));
+    }
   });
-  for (const k of keys) {
-    const items = groups.get(k)!;
-    const head = el('div', 'cat-head');
-    head.appendChild(el('span', 'cat-label', CAT_LABEL[k] || k));
-    head.appendChild(el('span', 'cat-count', String(items.length)));
-    main.appendChild(head);
-    for (const t of items) main.appendChild(trailRow(t));
-  }
+}
+
+/**
+ * Two-step delete, confirmed inline on the row itself.
+ *
+ * Inline rather than `confirm()`: a modal dialog from an extension popup is jarring, and in some
+ * contexts is suppressed entirely — which would turn a destructive action into a silent one.
+ *
+ * The wording is deliberately specific about scope. This deletes the trail, its pages, and the matching
+ * rows in the raw event log, so it is a real local delete rather than a hide. It cannot delete the
+ * memory Engram has already reconciled — Engram's REST API has no delete — and saying "deleted" without
+ * that caveat would be a promise the product can't keep.
+ */
+function askDelete(row: HTMLElement, t: Trail): void {
+  if (row.querySelector('.confirm')) return; // already asking
+  const bar = el('div', 'confirm');
+  const msg = el('div', 'confirm-msg');
+  msg.innerHTML = `Delete <b>${t.label.replace(/</g, '&lt;')}</b> and its ${t.pageCount} page${t.pageCount === 1 ? '' : 's'}?`
+    + '<span class="confirm-note">Removes them from the local log too. Any memory Engram already '
+    + 'reconciled stays.';
+  bar.appendChild(msg);
+
+  const actions = el('div', 'confirm-actions');
+  const no = el('button', 'confirm-cancel', 'Cancel');
+  const yes = el('button', 'confirm-go', 'Delete') as HTMLButtonElement;
+  no.addEventListener('click', () => bar.remove());
+  yes.addEventListener('click', async () => {
+    yes.disabled = true;
+    yes.textContent = 'Deleting…';
+    try {
+      const r = await fetch(`${BACKEND}/trails/${encodeURIComponent(t.id)}`, {
+        method: 'DELETE',
+        headers: await authHeaders(),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      // Drop it from the cache as well as the DOM, or the next repaint from cache brings it back.
+      if (cache.trails) cache.trails = cache.trails.filter((x) => x.id !== t.id);
+      loaded = loaded.filter((x) => x.id !== t.id);
+      cache.week = null;       // page/trail totals and every stat just changed
+      cache.interests = null;  // the durable-trail fallback may have drawn on this trail
+      row.remove();
+      const remaining = cache.trails?.length ?? 0;
+      $('listCount').textContent = `${remaining} trail${remaining === 1 ? '' : 's'}`;
+    } catch {
+      yes.disabled = false;
+      yes.textContent = 'Delete';
+      msg.innerHTML = 'Couldn’t delete that — is the backend running?';
+    }
+  });
+  actions.append(no, yes);
+  bar.appendChild(actions);
+  row.appendChild(bar);
 }
 
 function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLElement {
@@ -200,6 +380,13 @@ function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLE
   const setBtn = (txt: string) => { btn.innerHTML = iconSvg('resurrect', 13) + `<span>${txt}</span>`; };
   setBtn('Resurrect');
   top.appendChild(btn);
+
+  const del = el('button', 'icon-btn danger-btn') as HTMLButtonElement;
+  del.innerHTML = iconSvg('trash', 14);
+  del.title = 'Delete this trail';
+  del.setAttribute('aria-label', `Delete trail: ${t.label}`);
+  del.addEventListener('click', (e) => { e.stopPropagation(); askDelete(row, t); });
+  top.appendChild(del);
   row.appendChild(top);
 
   // One-liner + meta are full-width rows (indented to the title) so text isn't boxed into the
@@ -207,14 +394,18 @@ function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLE
   if (t.oneLiner) row.appendChild(el('div', 'trail-one', t.oneLiner));
   const meta = el('div', 'trail-meta');
   meta.appendChild(el('span', 'meta-text', `${t.pageCount} pages · ${t.topDomain || '—'} · ${rel(t.lastActive)}`));
-  // How this result surfaced (search only): semantic = Engram memory (highlighted), else keyword.
+  // How this result surfaced (search only). The tag's job is to answer "why is this row here?", so it
+  // names the thing that matched — the words, or the meaning. It used to read "keyword" / "memory":
+  // "memory" is our internal word for the Engram layer and told the user nothing about the match, which
+  // is exactly the row they most need explained, since it shares no words with what they typed.
   if (why) {
-    const tag = el('span', 'match-tag ' + (why === 'semantic' ? 'via-memory' : 'via-keyword'));
-    tag.innerHTML = iconSvg(why === 'semantic' ? 'sparkle' : 'search', 11) +
-      `<span>${why === 'semantic' ? 'memory' : 'keyword'}</span>`;
-    tag.title = why === 'semantic'
-      ? 'Surfaced by Engram semantic memory — matched by meaning'
-      : 'Matched a keyword in this trail';
+    const semantic = why === 'semantic';
+    const tag = el('span', 'match-tag ' + (semantic ? 'via-memory' : 'via-keyword'));
+    tag.innerHTML = iconSvg(semantic ? 'sparkle' : 'search', 11) +
+      `<span>${semantic ? 'meaning' : 'text'}</span>`;
+    tag.title = semantic
+      ? 'Found by meaning, not words — Engram\'s semantic memory matched this trail to your query'
+      : 'Found because your words appear in this trail';
     meta.appendChild(tag);
   }
   row.appendChild(meta);
@@ -240,12 +431,18 @@ function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLE
     try {
       // Fast path: fetch pages/urls (no LLM) so the user can reopen tabs immediately.
       const d = await api.get(`/trails/${t.id}`);
-      const urls: string[] = (d?.pages || []).map((p: { url: string }) => p.url).filter(Boolean);
+      // `d.resurrectUrls`, NOT `d.pages`: the server already resolved the checkpoint working set and
+      // applied the cap. Deriving the list from `d.pages` here reopened the trail's entire history and
+      // meant the checkpoint tables were written but never read by the only UI that reopens tabs.
+      const urls: string[] = (d?.resurrectUrls || []).filter(Boolean);
       const reopen = el('button', 'reopen') as HTMLButtonElement;
       reopen.innerHTML = iconSvg('reopen', 13) + `<span>Reopen ${urls.length} tab${urls.length === 1 ? '' : 's'}</span>`;
+      reopen.disabled = urls.length === 0;
       reopen.addEventListener('click', (ev) => {
         ev.stopPropagation();
-        urls.slice(0, 25).forEach((u) => chrome.tabs.create({ url: u, active: false }));
+        // Open every url counted on the label. The old `slice(0, 25)` capped here instead, so a
+        // 60-page trail promised "Reopen 60 tabs" and delivered 25.
+        urls.forEach((u) => chrome.tabs.create({ url: u, active: false }));
         const s = reopen.querySelector('span'); if (s) s.textContent = 'Reopened';
         void updateTabCount();
       });
@@ -286,24 +483,26 @@ async function runSearch(q: string): Promise<void> {
   const seq = ++searchSeq;
   $('listBar').style.display = 'none'; // the group toggle applies to the list, not search results
 
-  // Show a loading state — the semantic pass hits Engram Cloud and can take a moment.
-  main.innerHTML = '';
-  const loading = el('div', 'searching');
-  loading.appendChild(el('span', 'spinner'));
-  loading.appendChild(el('span', undefined, 'Searching your memory…'));
-  main.appendChild(loading);
+  // Show a loading state — the semantic pass hits Engram Cloud and can take a moment. Unlike a tab
+  // switch this spinner is wanted: the user pressed Enter and a cloud round trip is genuinely pending.
+  paint((out) => {
+    const loading = el('div', 'searching');
+    loading.appendChild(el('span', 'spinner'));
+    loading.appendChild(el('span', undefined, 'Searching your memory…'));
+    out.appendChild(loading);
+  });
 
   try {
     const { hits } = await api.post('/search', { query: q });
     if (seq !== searchSeq) return; // a newer keystroke superseded this search
-    main.innerHTML = '';
-    if (!hits?.length) { main.appendChild(el('div', 'empty', `Nothing matched “${q}” yet.`)); return; }
-    const sorted = (hits as Hit[]).slice().sort((a, b) => b.trail.lastActive - a.trail.lastActive);
-    for (const h of sorted) main.appendChild(trailRow(h.trail, h.why, h.snippet, true));
+    paint((out) => {
+      if (!hits?.length) { out.appendChild(el('div', 'empty', `Nothing matched “${q}” yet.`)); return; }
+      const sorted = (hits as Hit[]).slice().sort((a, b) => b.trail.lastActive - a.trail.lastActive);
+      for (const h of sorted) out.appendChild(trailRow(h.trail, h.why, h.snippet, true));
+    });
   } catch {
     if (seq !== searchSeq) return;
-    main.innerHTML = '';
-    main.appendChild(el('div', 'empty', 'Search failed — is the backend running?'));
+    paint((out) => out.appendChild(el('div', 'empty', 'Search failed — is the backend running?')));
   }
 }
 
@@ -330,40 +529,114 @@ function filterLoaded(q: string): void {
     const hay = `${t.label} ${t.oneLiner ?? ''} ${t.category} ${t.topDomain ?? ''}`.toLowerCase();
     return toks.every((w) => hay.includes(w));
   });
-  const main = $('main');
-  main.innerHTML = '';
   $('listBar').style.display = 'none';
-  if (!hits.length) {
-    // The filter can only see what's loaded; Engram can see meaning. Make that escalation obvious.
-    const d = el('div', 'empty');
-    d.innerHTML = `No loaded trail matches \u201c${q}\u201d.<br/>Press <b>Enter</b> to search your memory semantically.`;
-    main.appendChild(d);
-    return;
-  }
-  const sorted = hits.slice().sort((a, b) => b.lastActive - a.lastActive);
-  for (const t of sorted) main.appendChild(trailRow(t, undefined, undefined, true));
-  const hint = el('div', 'empty', 'Press Enter to search your full memory, including archived trails.');
-  hint.style.paddingTop = '18px';
-  main.appendChild(hint);
+  paint((out) => {
+    if (!hits.length) {
+      // The filter can only see what's loaded; Engram can see meaning. Make that escalation obvious.
+      const d = el('div', 'empty');
+      d.innerHTML = `No loaded trail matches \u201c${q}\u201d.<br/>Press <b>Enter</b> to search your memory semantically.`;
+      out.appendChild(d);
+      return;
+    }
+    const sorted = hits.slice().sort((a, b) => b.lastActive - a.lastActive);
+    for (const t of sorted) out.appendChild(trailRow(t, undefined, undefined, true));
+    const hint = el('div', 'empty', 'Press Enter to search your full memory, including archived trails.');
+    hint.style.paddingTop = '18px';
+    out.appendChild(hint);
+  });
 }
 
-async function renderWeek(): Promise<void> {
-  const main = $('main');
-  main.innerHTML = '';
-  const wk = await api.get('/week');
-  main.appendChild(el('div', 'week-head', wk.headline || ''));
-  const grid = el('div', 'stats');
-  for (const s of (wk.stats || []) as Stat[]) {
-    const card = el('div', 'stat');
-    const ico = el('span', 'stat-ico');
-    ico.innerHTML = iconSvg(STAT_ICON[s.key] || 'stack', 16);
-    card.appendChild(ico);
-    card.appendChild(el('div', 'stat-k', s.label));
-    card.appendChild(el('div', 'stat-v', s.value));
-    if (s.detail) card.appendChild(el('div', 'stat-d', s.detail));
-    grid.appendChild(card);
+function paintWeek(wk: Week): void {
+  paint((out) => {
+    out.appendChild(el('div', 'week-head', wk.headline || ''));
+    const grid = el('div', 'stats');
+    for (const s of wk.stats || []) {
+      const card = el('div', 'stat');
+      const ico = el('span', 'stat-ico');
+      ico.innerHTML = iconSvg(STAT_ICON[s.key] || 'stack', 16);
+      card.appendChild(ico);
+      card.appendChild(el('div', 'stat-k', s.label));
+      card.appendChild(el('div', 'stat-v', s.value));
+      if (s.detail) card.appendChild(el('div', 'stat-d', s.detail));
+      grid.appendChild(card);
+    }
+    out.appendChild(grid);
+  });
+}
+
+/**
+ * Durable cross-trail interests — the themes you keep returning to, as opposed to a single trail.
+ *
+ * `source` is the whole story here and is shown honestly rather than smoothed over. With a key,
+ * Engram synthesizes these across trails and carries their current state ("evaluating X, leaning Y"),
+ * so each row is tagged as memory. Without one, the server falls back to listing your most durable
+ * individual *trails* — useful, but it is not synthesis, and presenting it as though it were would be
+ * a lie the Trails tab immediately contradicts.
+ */
+function paintInterests(data: Interests): void {
+  const items = data.interests || [];
+  paint((out) => {
+    if (!items.length) {
+      const d = el('div', 'empty');
+      d.innerHTML = 'No durable interests yet.<br/><br/>An interest forms when a theme recurs across '
+        + 'several sessions or becomes a deep investigation — so this fills in after a few days of browsing, '
+        + 'not immediately.';
+      out.appendChild(d);
+      return;
+    }
+
+    const head = el('div', 'week-head');
+    if (data.source === 'engram') {
+      head.textContent = 'What you keep coming back to, synthesized across trails.';
+    } else {
+      head.innerHTML = 'Your most durable trails. <span class="int-note">Connect Engram to get real '
+        + 'cross-trail synthesis with current state.</span>';
+    }
+    out.appendChild(head);
+
+    for (const it of items) {
+      const row = el('div', 'interest');
+      // Deliberately NO per-row provenance tag. In search results `text`/`meaning` discriminates —
+      // rows on that screen matched different ways. Here every row has the same source, so a tag
+      // repeated on all of them carries no information, steals width from a label that is often a
+      // paragraph, and weakens the search tag by reusing its idiom where nothing is being told apart.
+      // The header states the source once, which is the right number of times.
+      //
+      // Engram is asked for "a short phrase led by the activity" but does not always comply — real
+      // memories arrive as 250-character paragraphs. Clamped to three lines with a `more…` toggle
+      // (attached below only where text is genuinely clipped) and the full text on hover.
+      const label = el('div', 'interest-label', it.label);
+      label.title = it.label;
+      row.appendChild(label);
+      if (it.detail) row.appendChild(el('div', 'interest-detail', it.detail));
+      out.appendChild(row);
+    }
+  });
+  addMoreToggles();
+}
+
+/**
+ * Attach a "more"/"less" toggle to any interest whose text is actually clipped.
+ *
+ * The ellipsis on a clamped label is drawn by `-webkit-line-clamp`, not by an element — so there is
+ * nothing to click, and clicking it did nothing. This adds a real control.
+ *
+ * Overflow has to be MEASURED, which means the rows must already be in the document: hence a pass after
+ * paint() rather than a guess from character count, which would be wrong at any other popup width or
+ * font size. Rows that fit get no button, so the affordance only appears where it does something.
+ */
+function addMoreToggles(): void {
+  for (const label of document.querySelectorAll<HTMLElement>('.interest-label')) {
+    if (label.scrollHeight <= label.clientHeight + 1) continue; // fits — nothing is hidden
+    const row = label.closest('.interest');
+    if (!row) continue;
+    const btn = el('button', 'more-btn', 'more…');
+    btn.addEventListener('click', () => {
+      const open = row.classList.toggle('open');
+      btn.textContent = open ? 'less' : 'more…';
+    });
+    row.appendChild(btn);
   }
-  main.appendChild(grid);
 }
 
 let armed = false;
@@ -383,11 +656,12 @@ async function onNuke(): Promise<void> {
 
 function renderBackendDown(): void {
   $('searchWrap').style.display = 'none';
-  const main = $('main');
-  main.innerHTML = '';
-  const d = el('div', 'down-msg');
-  d.innerHTML = 'Tab Zero backend isn\'t running.<br/>Start it with <code>pnpm backend</code>, then reopen this popup.';
-  main.appendChild(d);
+  $('listBar').style.display = 'none';
+  paint((out) => {
+    const d = el('div', 'down-msg');
+    d.innerHTML = 'Tab Zero backend isn\'t running.<br/>Start it with <code>pnpm backend</code>, then reopen this popup.';
+    out.appendChild(d);
+  });
 }
 
 void init();

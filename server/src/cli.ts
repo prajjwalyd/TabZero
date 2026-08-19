@@ -11,7 +11,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import {
   intro, outro, password, confirm, spinner, log, isCancel, cancel,
 } from '@clack/prompts';
-import { ENV_PATH, DATA_DIR, PORT, TOKEN } from './core/config.js';
+import { ENV_PATH, DATA_DIR, PORT, TOKEN, hardenPath } from './core/config.js';
 import { VERSION } from './core/version.js';
 
 const REPO = 'https://github.com/prajjwalyd/TabZero';
@@ -81,12 +81,16 @@ function requireNode(): void {
 
 // --- .env upsert (for the Engram key) ---
 function saveEnv(key: string, val: string): void {
-  mkdirSync(dirname(ENV_PATH), { recursive: true });
+  mkdirSync(dirname(ENV_PATH), { recursive: true, mode: 0o700 });
   const line = `${key}=${val}`;
   let body = existsSync(ENV_PATH) ? readFileSync(ENV_PATH, 'utf8') : '';
   const re = new RegExp(`^${key}=.*$`, 'm');
   body = re.test(body) ? body.replace(re, line) : (body && !body.endsWith('\n') ? body + '\n' : body) + line + '\n';
-  writeFileSync(ENV_PATH, body);
+  // 0600 explicitly: this file holds the Engram / OpenRouter API keys, and writeFileSync's default
+  // 0666-minus-umask leaves it world-readable. `mode` is only applied on create, so chmod after too —
+  // otherwise re-running `tabzero key` on an existing 0644 file would silently keep it 0644.
+  writeFileSync(ENV_PATH, body, { mode: 0o600 });
+  hardenPath(ENV_PATH);
 }
 
 // --- steps ---

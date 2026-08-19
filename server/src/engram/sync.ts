@@ -1,6 +1,7 @@
 import { db, getUserId } from '../core/db.js';
 import { getTrail, trailPages, labelTrail, summarizeTrail } from '../trails/trails.js';
 import { engramUpsertTrail } from './client.js';
+import { neutralize } from '../capture/redact.js';
 import * as cfg from '../core/config.js';
 import type { PageDTO } from '../core/types.js';
 
@@ -8,10 +9,15 @@ import type { PageDTO } from '../core/types.js';
 // Engram's own pipeline extracts and reconciles the memory from these, so it evolves as the trail
 // grows rather than us overwriting a pre-baked blob.
 function buildSignal(label: string, pages: PageDTO[]): string[] {
+  // This is the machine boundary — the last place data is ours before it is Weaviate's. Titles and
+  // descriptions are web-authored and routinely carry identifiers that add nothing to a recap (a webmail
+  // subject line, an account number), so scrub those here rather than trusting every visited site to
+  // have titled itself harmlessly. The topic itself is deliberately left intact: a recap is only useful
+  // if it is specific, so minimization strips identifiers, not subject matter.
   const facts = pages
     .slice(-25)
-    .map((p) => `${p.title}${p.description ? ' — ' + p.description.slice(0, 200) : ''} (${p.domain})`);
-  return [`Research trail: ${label}`, ...facts];
+    .map((p) => `${neutralize(p.title)}${p.description ? ' — ' + neutralize(p.description.slice(0, 200)) : ''} (${p.domain})`);
+  return [`Research trail: ${neutralize(label)}`, ...facts];
 }
 
 /** Count of trails with pending enrichment work, ignoring the settle gate (used to drive idle backoff). */

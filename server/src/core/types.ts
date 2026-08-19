@@ -79,4 +79,11 @@ export interface PageDTO {
 export interface TrailDetail extends TrailDTO {
   summary: string | null;
   pages: PageDTO[];
+  /**
+   * Exactly what a resurrect should reopen — checkpoint-aware and capped. Carried on the detail (a
+   * pure-SQL read, no LLM) so the fast path a client uses to render its reopen button is the SAME set
+   * the resurrect endpoint returns. `pages` is the trail's full history and is for DISPLAY only;
+   * reopening from it is what silently discarded the checkpoint logic before.
+   */
+  resurrectUrls: string[];
 }

@@ -128,15 +128,37 @@ export interface Interest { content: string; score: number | null }
  * does not re-gate them. Memories carry no scope property (the topic is user-scoped), which is why
  * nothing here filters on one; requiring a property was what made this whole layer read as "local".
  */
+/**
+ * Retrieval probes, run together and unioned.
+ *
+ * There is no "list memories by topic" in the verified REST surface — the only way in is semantic
+ * search, which is RANKED. So a single query returns whichever interests are nearest that one phrasing
+ * and silently hides the rest: on a real account holding five ResearchInterest memories, the original
+ * single-query version returned two. Interests looked like they were barely forming when in fact they
+ * were barely being read.
+ *
+ * These deliberately approach from different angles — the standing summary, active decisions, active
+ * building, and recurrence — because that spread is what makes the union approximate "all of them".
+ * `/memories/search` is a free read (only `/memories` costs a pipeline run), so the extra probes cost
+ * nothing against the free-tier budget, and they run in parallel so they cost no extra latency either.
+ */
+const INTEREST_PROBES = [
+  'the user\'s main ongoing interests, themes, and projects',
+  'what the user is currently evaluating, comparing, or deciding between',
+  'what the user is learning, building, or investigating',
+  'recurring topics and themes the user returns to across many sessions',
+];
+
 export async function engramInterests(
   userId: string,
-  query = 'the user\'s main ongoing interests, themes, and projects',
+  probes: string[] = INTEREST_PROBES,
 ): Promise<Interest[]> {
   if (!ENGRAM_ENABLED) return [];
-  const hits = await engramSearch(userId, query);
+  const results = await Promise.all(probes.map((q) => engramSearch(userId, q)));
+
   const seen = new Set<string>();
   const out: Interest[] = [];
-  for (const h of hits) {
+  for (const h of results.flat()) {
     // The configured interest topic, or — if it was renamed without setting TABZERO_INTEREST_TOPIC —
     // any user-scoped memory that isn't a trail summary.
     const isInterest = h.topic === INTEREST_TOPIC || (!h.trailId && h.topic !== TRAIL_TOPIC);
@@ -145,5 +167,9 @@ export async function engramInterests(
     seen.add(c);
     out.push({ content: c, score: h.score });
   }
+  // Best-scoring first, so the cap below drops the weakest rather than whichever probe happened to
+  // return last. Unscored hits sort last rather than winning by accident.
+  out.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  if (DEBUG) console.error(`[engram] interests: ${probes.length} probes -> ${out.length} distinct`);
   return out.slice(0, 12);
 }

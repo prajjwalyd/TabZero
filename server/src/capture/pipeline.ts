@@ -3,6 +3,7 @@ import {
   canonicalize, tokenize, bag, addInto, cosine, topTokens, provisionalLabel,
   type Canon, type Vec,
 } from './canonical.js';
+import { isSensitiveUrl, redact, redactTextParams } from './redact.js';
 import type { TabEventInput, PageRow } from '../core/types.js';
 import * as cfg from '../core/config.js';
 
@@ -11,16 +12,38 @@ const activeByWindow = new Map<number, { tabId: number; canonical: string | null
 const tabCanon = new Map<number, string>(); // tabId -> current canonical url
 const tabOpener = new Map<number, number>(); // tabId -> openerTabId
 
+// A real page title is well under 200 characters; `description`/`heading` are already clamped to 320
+// in upsertPage. An unbounded title is both bad data and a cost: tokenize() lowercases the whole
+// string and runs a global regex over it, materializing every match before it stops at 40 tokens, so a
+// multi-megabyte title (a hostile client, or simply a page with a pathological <title>) turns one
+// event into a long CPU stall. Clamp at the boundary so the log, the page row, and the vector all see
+// the same bounded value.
+const MAX_TITLE_LEN = 512;
+// A title is not just prose: Chrome reports the raw URL as the title until the page supplies one, so a
+// title can BE a URL — complete with `code_challenge=` and `state=`. Redact param values here too, or
+// the secret that redact() stripped from the url survives in the title beside it.
+const clampTitle = (t: string | null | undefined): string | null =>
+  t == null ? null : redactTextParams(t.slice(0, MAX_TITLE_LEN)) || null;
+
 export function ingestEvent(ev: TabEventInput): void {
-  const canon = ev.url ? canonicalize(ev.url) : null;
+  // Redaction runs BEFORE canonicalization and before anything is written. An auth-flow page is
+  // dropped to a null url — which the existing no-canonical path already handles correctly, so dwell
+  // and session bookkeeping still work for the rest of the window while neither the address nor a page
+  // row is ever stored. Everything else keeps its url with secret-bearing param values replaced.
+  const safeUrl = isSensitiveUrl(ev.url) ? null : redact(ev.url);
+  const canon = safeUrl ? canonicalize(safeUrl) : null;
+  const title = clampTitle(ev.title);
 
   // 1. Append to the immutable raw log (source of truth for exact reopen).
   db.prepare(
-    `INSERT INTO events (ts, type, tab_id, opener_tab_id, window_id, url, canonical_url, title, favicon)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO events (ts, type, tab_id, opener_tab_id, window_id, url, canonical_url, title, favicon, description)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     ev.ts, ev.type, ev.tabId ?? null, ev.openerTabId ?? null, ev.windowId ?? null,
-    ev.url ?? null, canon?.canonical ?? null, ev.title ?? null, ev.favIconUrl ?? null,
+    safeUrl, canon?.canonical ?? null, title, ev.favIconUrl ?? null,
+    // Logged so a replay reproduces the same vectors and the same Engram signal. Clamped like the
+    // page row is, so the log can't become the one unbounded copy.
+    redactTextParams((ev.description || ev.heading || '').trim().slice(0, 320)) || null,
   );
 
   if (ev.openerTabId != null) tabOpener.set(ev.tabId, ev.openerTabId);
@@ -49,7 +72,7 @@ export function ingestEvent(ev: TabEventInput): void {
     win.canonical = canon.canonical;
     win.since = ev.ts;
   }
-  upsertPage(canon, ev, revisit);
+  upsertPage(canon, ev, revisit, safeUrl);
 }
 
 function creditDwell(windowId: number, now: number): void {
@@ -63,10 +86,10 @@ function creditDwell(windowId: number, now: number): void {
   }
 }
 
-function upsertPage(canon: Canon, ev: TabEventInput, revisit: boolean): void {
+function upsertPage(canon: Canon, ev: TabEventInput, revisit: boolean, safeUrl: string | null): void {
   const existing = db.prepare('SELECT * FROM pages WHERE canonical_url = ?').get(canon.canonical) as PageRow | undefined;
-  const title = (ev.title || existing?.title || '').trim();
-  const rawDesc = (ev.description || ev.heading || '').trim().slice(0, 320) || null;
+  const title = (clampTitle(ev.title) || existing?.title || '').trim();
+  const rawDesc = redactTextParams((ev.description || ev.heading || '').trim().slice(0, 320)) || null;
   // Suppress site-wide boilerplate (e.g. an SPA's static og:description repeated on every route):
   // if this exact description already appears on another page of the same domain, it's a template,
   // not page content — drop it so it never pollutes the trail vector or the memory.
@@ -106,7 +129,7 @@ function upsertPage(canon: Canon, ev: TabEventInput, revisit: boolean): void {
   db.prepare(
     `INSERT INTO pages (canonical_url, url, title, domain, first_seen, last_seen, visit_count, total_dwell_ms, trail_id, tokens, description)
      VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)`,
-  ).run(canon.canonical, ev.url ?? canon.canonical, title, canon.domain, ev.ts, ev.ts, null, JSON.stringify(tokens), desc);
+  ).run(canon.canonical, safeUrl ?? canon.canonical, title, canon.domain, ev.ts, ev.ts, null, JSON.stringify(tokens), desc);
 
   const trailId = assignTrail(canon, tokens, ev);
   db.prepare('UPDATE pages SET trail_id = ? WHERE canonical_url = ?').run(trailId, canon.canonical);
