@@ -80,6 +80,17 @@ export interface EngramHit {
   trailId: string | null;
   topic: string | null;
   score: number | null;
+  /** When Engram last REWROTE this memory, in ms. Meaningful because both topics are bounded: a memory
+   *  is revised in place as the trail or interest evolves, so this is "when my understanding last
+   *  changed", not "when this row was created". */
+  updatedAt: number | null;
+}
+
+/** ISO-8601 -> ms. Defensive like the rest of this client: an unparseable or absent stamp is null, not NaN. */
+function parseTs(v: unknown): number | null {
+  if (typeof v !== 'string') return null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : null;
 }
 
 /** Raw semantic search over the user's Engram memories. Returns hits with topic + scope properties. */
@@ -93,6 +104,7 @@ export async function engramSearch(userId: string, query: string): Promise<Engra
     trailId: m?.properties?.trail_id ?? m?.trail_id ?? null,
     topic: m?.topic ?? null,
     score: typeof m?.score === 'number' ? m.score : null,
+    updatedAt: parseTs(m?.updated_at ?? m?.updatedAt ?? m?.created_at ?? m?.createdAt),
   }));
 }
 
@@ -120,7 +132,7 @@ export async function engramTrailMemory(userId: string, trailId: string, hint: s
   return content && content.length > 24 ? content : null;
 }
 
-export interface Interest { content: string; score: number | null }
+export interface Interest { content: string; score: number | null; updatedAt: number | null }
 
 /**
  * The interests Engram has synthesized on the ResearchInterest topic. Its own topic description
@@ -165,7 +177,7 @@ export async function engramInterests(
     const c = h.content?.trim();
     if (!isInterest || !c || seen.has(c)) continue;
     seen.add(c);
-    out.push({ content: c, score: h.score });
+    out.push({ content: c, score: h.score, updatedAt: h.updatedAt });
   }
   // Best-scoring first, so the cap below drops the weakest rather than whichever probe happened to
   // return last. Unscored hits sort last rather than winning by accident.

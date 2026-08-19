@@ -183,19 +183,20 @@ main.swap { animation: tz-swap .13s ease-out; }
    Deliberately a flatter row than .trail: an interest is not clickable and has no detail to expand, so
    giving it the same affordance as a trail card would promise an interaction that isn't there. */
 .interest { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; }
-/* Clamped because the source text is not under our control: Engram is asked for a short phrase but
-   returns 250-character paragraphs in practice. Three lines keeps the list scannable; a "more" toggle
-   (added in JS only where the text is genuinely clipped) reveals the rest. */
-.interest-label { font-size: 13px; font-weight: 550; line-height: 1.45; letter-spacing: -0.05px;
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-/* Dropping to `display: block` is what releases the clamp — resetting -webkit-line-clamp alone does
-   not, since the clamp only applies inside a -webkit-box. */
-.interest.open .interest-label { display: block; overflow: visible; }
+/* No -webkit-line-clamp here, deliberately. The clamp paints its own ellipsis that cannot be suppressed,
+   so combining it with a toggle produced two ellipses and pushed `more…` onto its own line. The text is
+   truncated in JS instead (popup.ts::interestLabel), which leaves exactly one ellipsis — carried by the
+   inline toggle below, so the collapsed form reads as one continuous phrase: `…terminal ...more`. */
+.interest-label { font-size: 13px; font-weight: 550; line-height: 1.45; letter-spacing: -0.05px; }
+/* `display: inline` is what keeps it on the last line of text rather than starting a new block. */
 .more-btn {
-  margin-top: 7px; padding: 0; background: none; border: 0; cursor: pointer;
-  font-family: var(--sans); font-size: 11px; font-weight: 550; color: var(--accent); letter-spacing: .1px;
+  display: inline; padding: 0; background: none; border: 0; cursor: pointer;
+  font: inherit; font-weight: 600; color: var(--accent); letter-spacing: .1px; white-space: nowrap;
 }
 .more-btn:hover { color: var(--accent-hover); text-decoration: underline; }
+/* Needed explicitly: `.more-btn { display: inline }` above outranks the UA's `[hidden] { display: none }`,
+   so without this the toggle stays visible when JS hides it. */
+.more-btn[hidden] { display: none; }
 .interest-detail { margin-top: 6px; font-size: 10.5px; color: var(--faint); letter-spacing: .2px; }
 .int-note { display: block; margin-top: 4px; color: var(--faint); }
 
@@ -217,3 +218,14 @@ main.swap { animation: tz-swap .13s ease-out; }
 .confirm-go { background: var(--danger); border-color: var(--danger); color: #fff; }
 .confirm-go:hover { filter: brightness(1.06); }
 .confirm-go:disabled { opacity: .6; cursor: default; }
+
+/* ---- search legend ----
+   Explains the row tags once, above the results, so the pills read as shorthand rather than jargon.
+   Wraps to two lines at narrow widths on purpose — one item per line is more readable than a cramped
+   single row, and this only appears after pressing Enter. */
+.search-legend {
+  display: flex; flex-wrap: wrap; gap: 4px 14px;
+  padding: 2px 4px 12px; font-size: 11px; color: var(--faint); line-height: 1.5;
+}
+.legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.legend-text { letter-spacing: .1px; }

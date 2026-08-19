@@ -13,6 +13,9 @@
  *      undoes the inflation the extension's queue bug caused — one real visit read as 436.
  *   4. Trail `page_count` / `centroid` are rebuilt for any trail that lost pages, so decay, status and
  *      the interest gate stop being computed from counts that no longer match reality.
+ *   5. The vestigial `trails.status` / `trails.liveness` columns are dropped. Both predate those values
+ *      becoming read-derived and have been frozen and wrong ever since; the current schema does not
+ *      declare them, so only a database from an older build still carries them.
  *
  * DRY RUN BY DEFAULT. Pass --apply to write, which takes a timestamped backup first. Refuses to run
  * while the daemon is up, because it holds the database open and would race these writes.
@@ -74,6 +77,19 @@ async function main(): Promise<void> {
   const badPageTitles = pageTitleRows.filter((r) => redactTextParams(r.title) !== r.title);
   log(`  titles carrying a secret ......... ${badTitles.length} event + ${badPageTitles.length} page`);
   for (const r of badPageTitles.slice(0, 4)) log(`      - ${r.title.slice(0, 84)}`);
+
+  // ---- vestigial columns ----
+  //
+  // `status` and `liveness` were stored before those values became read-derived, and nothing has read or
+  // written them since. A dead column is not inert: on a real database the stored `status` was wrong for
+  // 20 of 24 rows, only ever held `forming`/`live` (the two values the old writer knew how to produce),
+  // and `liveness` was 0 everywhere — so anyone opening the file would reasonably conclude decay was
+  // broken. This lives here rather than in db.ts because DROP COLUMN rewrites the table, and that should
+  // happen behind a backup and a daemon check, not unprompted at boot.
+  const trailCols = (db.prepare('PRAGMA table_info(trails)').all() as unknown as { name: string }[])
+    .map((c) => c.name);
+  const vestigial = ['status', 'liveness'].filter((c) => trailCols.includes(c));
+  log(`  vestigial columns to drop ........ ${vestigial.length ? vestigial.join(', ') : 'none'}`);
 
   // ---- 3. visit_count from the log ----
   //
@@ -203,6 +219,13 @@ async function main(): Promise<void> {
       'DELETE FROM checkpoint_pages WHERE canonical_url NOT IN (SELECT canonical_url FROM pages)',
     ).run();
     if (orphans.changes) log(`  orphaned checkpoint rows swept .. ${orphans.changes}`);
+
+    // Vestigial columns. DROP COLUMN fails if a column is indexed; neither of these is, and the whole
+    // thing is best-effort — losing a cleanup must not lose the rest of the repair.
+    for (const col of vestigial) {
+      try { db.exec(`ALTER TABLE trails DROP COLUMN ${col}`); }
+      catch (e) { log(`  could not drop trails.${col}: ${(e as Error).message}`); }
+    }
 
     db.exec('COMMIT');
   } catch (e) {

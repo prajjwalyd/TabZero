@@ -63,7 +63,14 @@ CREATE TABLE IF NOT EXISTS trails (
   centroid      TEXT DEFAULT '{}',
   page_count    INTEGER DEFAULT 0,
   session_count INTEGER DEFAULT 1,
-  category      TEXT
+  category      TEXT,
+  -- Last successful Engram push, so the background loop can rate-limit re-pushes and stay inside the
+  -- free-tier pipeline budget (see engram/sync.ts::flushEngram).
+  last_engram_push INTEGER,
+  -- Who authored the cached recap: 'engram' | 'local' | 'heuristic'. Load-bearing — a local recap is a
+  -- placeholder that must keep retrying Engram, and gating on missing-or-dirty alone froze 9 of 20
+  -- trails on a placeholder that could never upgrade (see trails.ts::recapNeedsRefresh).
+  summary_source   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_trails_active ON trails(last_active);
 
@@ -95,42 +102,27 @@ CREATE TABLE IF NOT EXISTS categories (
 CREATE TABLE IF NOT EXISTS meta ( key TEXT PRIMARY KEY, value TEXT );
 `);
 
-// Migration: add pages.description to databases created before metadata capture existed.
-const pageCols = db.prepare('PRAGMA table_info(pages)').all() as unknown as { name: string }[];
-if (!pageCols.some((c) => c.name === 'description')) {
-  db.exec('ALTER TABLE pages ADD COLUMN description TEXT');
-}
-
-// Migration: log the page description alongside the title.
-//
-// This closes a real gap in the central claim that "the raw log is the source of truth, so everything
-// derived is rebuildable by replaying it". It wasn't: `meta` events carry an og:description, that
-// description lands in pages.description, and it feeds BOTH the trail centroid (via tokenize) and the
-// signal pushed to Engram — but it was never written to the log. A replay therefore produced weaker
-// vectors and thinner memories than the original run, silently. Logging it makes the claim true for
-// everything captured from here on; rows written before this migration keep a NULL.
-const eventCols = db.prepare('PRAGMA table_info(events)').all() as unknown as { name: string }[];
-if (!eventCols.some((c) => c.name === 'description')) {
-  db.exec('ALTER TABLE events ADD COLUMN description TEXT');
-}
-
-// Migration: add trails.category for the LLM-refined category (heuristic is the fallback).
-const trailCols = db.prepare('PRAGMA table_info(trails)').all() as unknown as { name: string }[];
-if (!trailCols.some((c) => c.name === 'category')) {
-  db.exec('ALTER TABLE trails ADD COLUMN category TEXT');
-}
-
-// Migration: track the last successful Engram push per trail so the background loop can rate-limit
-// re-pushes and stay inside the free-tier pipeline budget.
-if (!trailCols.some((c) => c.name === 'last_engram_push')) {
-  db.exec('ALTER TABLE trails ADD COLUMN last_engram_push INTEGER');
-}
-
-// Migration: record who authored the cached summary ('engram' | 'local' | 'heuristic'). A local
-// summary is a placeholder that gets upgraded to Engram's reconciled memory once extraction lands.
-if (!trailCols.some((c) => c.name === 'summary_source')) {
-  db.exec('ALTER TABLE trails ADD COLUMN summary_source TEXT');
-}
+/**
+ * No migrations here, deliberately.
+ *
+ * The CREATE TABLE block above is the single source of truth for the schema: a fresh install gets the
+ * final shape directly, so there is nothing to migrate FROM. Every ALTER that used to live here was a
+ * guaranteed no-op on a new database (the columns it added are already declared above) — six statements
+ * that existed only to carry one developer's pre-release database forward, in a repo where no published
+ * version exists for anyone else to have upgraded from.
+ *
+ * Two reasons that mattered enough to remove them rather than leave them as harmless clutter:
+ *   - The real schema became unreadable. Knowing a table's true shape meant reading CREATE TABLE *and*
+ *     then six scattered ALTERs, and the drift between them is exactly how a column ends up stale and
+ *     lying to anyone who opens the database.
+ *   - A boot-time `ALTER TABLE ... DROP COLUMN` rewrites the table, unprompted, on the user's only copy
+ *     of their browsing history, with no backup. That belongs in scripts/repair.ts — which takes a
+ *     backup, refuses to run while the daemon holds the file, and is already the tool for the job.
+ *
+ * When a released version needs a schema change, the principled home is SQLite's own `PRAGMA
+ * user_version`: bump it here, apply steps between the stored value and the current one. Adding that
+ * machinery before there is a released version to migrate from would be inventing the problem.
+ */
 
 // Generic key/value on the `meta` table — currently only backs the stored user_id below.
 function getMeta(key: string): string | null {

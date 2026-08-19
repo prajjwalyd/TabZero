@@ -110,3 +110,90 @@ test('a plaintext ENGRAM_BASE is refused at boot rather than leaking the key ove
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a FRESH install gets the complete schema — there are no migrations to fall back on', () => {
+  // The schema is declared once now, in CREATE TABLE, with no ALTERs behind it. That makes this the test
+  // that matters: removing the migrations silently dropped `last_engram_push` and `summary_source` from
+  // new installs, because those two had only ever been added by ALTER. Both are load-bearing (the Engram
+  // re-push budget; the frozen-recap fix), and a fresh clone would have failed on the first write that
+  // touched them. Exercising the writes is the proof — a missing column is a hard SQLite error.
+  const dir = mkdtempSync(join(tmpdir(), 'tabzero-fresh-'));
+  try {
+    const r = boot(
+      { TABZERO_DATA: dir, ENGRAM_API_KEY: '', TABZERO_PORT: '8777' },
+      [
+        `const { db } = await import(${SRC('core/db.ts')});`,
+        "db.prepare(\"INSERT INTO trails (id,label,created,last_active,centroid,page_count,session_count) VALUES ('t_1','x',1,1,'{}',2,1)\").run();",
+        "db.prepare('UPDATE trails SET summary = ?, summary_source = ?, summary_dirty = 0 WHERE id = ?').run('a recap','engram','t_1');",
+        "db.prepare('UPDATE trails SET engram_dirty = 0, engram_ref = ?, last_engram_push = ? WHERE id = ?').run('run_1',2,'t_1');",
+        "db.prepare(\"INSERT INTO pages (canonical_url,url,title,domain,first_seen,last_seen,tokens,description) VALUES ('u','u','t','d',1,1,'[]','desc')\").run();",
+        "db.prepare(\"INSERT INTO events (ts,type,url,canonical_url,title,description) VALUES (1,'navigate','u','u','t','desc')\").run();",
+        "console.log(JSON.stringify(db.prepare('SELECT summary_source, last_engram_push FROM trails WHERE id = ?').get('t_1')));",
+      ].join('\n'),
+    );
+    assert.equal(r.status, 0, `a fresh install could not complete its own writes: ${r.stderr}`);
+    const row = JSON.parse(r.stderr.trim().split('\n').filter((l) => l.startsWith('{')).pop()!);
+    assert.equal(row.summary_source, 'engram', 'summary_source must exist and round-trip');
+    assert.equal(row.last_engram_push, 2, 'last_engram_push must exist and round-trip');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('vestigial columns are dropped by repair, and never silently at boot', () => {
+  // Moved out of db.ts deliberately: DROP COLUMN rewrites the table, and that belongs behind a backup and
+  // a daemon check rather than happening unprompted on someone's only copy of their browsing history.
+  const dir = mkdtempSync(join(tmpdir(), 'tabzero-vest-'));
+  const legacy = [
+    'CREATE TABLE trails (',
+    '  id TEXT PRIMARY KEY, label TEXT, one_liner TEXT, status TEXT, created INTEGER,',
+    '  last_active INTEGER, liveness REAL, summary TEXT, summary_dirty INTEGER DEFAULT 1,',
+    '  label_dirty INTEGER DEFAULT 1, engram_dirty INTEGER DEFAULT 1, engram_ref TEXT,',
+    "  centroid TEXT DEFAULT '{}', page_count INTEGER DEFAULT 0, session_count INTEGER DEFAULT 1,",
+    '  category TEXT, last_engram_push INTEGER, summary_source TEXT )',
+  ].join(' ');
+  try {
+    const seed = boot(
+      { TABZERO_DATA: dir, ENGRAM_API_KEY: '', TABZERO_PORT: '8778' },
+      [
+        "const { DatabaseSync } = await import('node:sqlite');",
+        `const d = new DatabaseSync(${JSON.stringify(join(dir, 'tabzero.db'))});`,
+        `d.exec(${JSON.stringify(legacy)});`,
+        "d.prepare('INSERT INTO trails (id,label,status,created,last_active,liveness,page_count,session_count) VALUES (?,?,?,?,?,?,?,?)').run('t_legacy','Legacy trail','live',1,1,0,5,2);",
+        'd.close();',
+      ].join('\n'),
+    );
+    assert.equal(seed.status, 0, `seeding the legacy db failed: ${seed.stderr}`);
+
+    // Booting the daemon must leave the table alone.
+    const afterBoot = boot(
+      { TABZERO_DATA: dir, ENGRAM_API_KEY: '', TABZERO_PORT: '8779' },
+      [
+        `const { db } = await import(${SRC('core/db.ts')});`,
+        "console.log(JSON.stringify(db.prepare('PRAGMA table_info(trails)').all().map((c) => c.name)));",
+      ].join('\n'),
+    );
+    assert.equal(afterBoot.status, 0, afterBoot.stderr);
+    const bootCols = JSON.parse(afterBoot.stderr.trim().split('\n').filter((l) => l.startsWith('[')).pop()!);
+    assert.ok(bootCols.includes('status'), 'boot must not rewrite the table unprompted');
+
+    // repair --apply is what removes them, and the row must survive.
+    const rep = boot(
+      { TABZERO_DATA: dir, ENGRAM_API_KEY: '', TABZERO_PORT: '8781' },
+      [
+        "process.argv.push('--apply');",
+        `await import(${SRC('scripts/repair.ts')});`,
+        `const { db } = await import(${SRC('core/db.ts')});`,
+        "console.log(JSON.stringify({ cols: db.prepare('PRAGMA table_info(trails)').all().map((c) => c.name), row: db.prepare('SELECT id,label,page_count,session_count FROM trails').get() }));",
+      ].join('\n'),
+    );
+    assert.equal(rep.status, 0, `repair failed: ${rep.stderr}`);
+    const { cols, row } = JSON.parse(rep.stderr.trim().split('\n').filter((l) => l.startsWith('{')).pop()!);
+    assert.ok(!cols.includes('status'), `status survived repair: ${cols.join(',')}`);
+    assert.ok(!cols.includes('liveness'), `liveness survived repair: ${cols.join(',')}`);
+    assert.equal(row.id, 't_legacy', 'the row survived');
+    assert.equal(row.page_count, 5, 'page_count — what status is DERIVED from — must not be lost');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

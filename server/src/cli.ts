@@ -206,12 +206,22 @@ function startDaemon(): void {
   child.on('exit', (code) => process.exit(code ?? 0));
 }
 
-/** Make `tabzero` a bare command: `npm link` from the repo (dev), `npm i -g` once published. */
+/**
+ * Make `tabzero` a bare command.
+ *
+ * From a clone, `npm link` from the repo root. Otherwise install from GitHub — NOT `npm i -g tabzero`,
+ * which is what this used to do and which 404s: Tab Zero is distributed straight from the repo, not
+ * through the npm registry. `files` deliberately excludes tsconfig.base.json, so a GitHub install has
+ * IS_REPO=false and took exactly that broken branch.
+ */
+const GH_SPEC = 'github:prajjwalyd/TabZero';
+
 function installGlobal(): { ok: boolean; detail: string } {
-  const args = IS_REPO ? ['link'] : ['i', '-g', 'tabzero'];
+  const args = IS_REPO ? ['link'] : ['i', '-g', GH_SPEC];
+  const detail = IS_REPO ? 'npm link' : `npm i -g ${GH_SPEC}`;
   const r = spawnSync('npm', args, { stdio: 'ignore', cwd: IS_REPO ? PKG_ROOT : undefined });
-  if (r.status === 0) return { ok: true, detail: IS_REPO ? 'npm link' : 'npm i -g tabzero' };
-  return { ok: false, detail: 'needs different permissions, or the package isn’t published yet' };
+  if (r.status === 0) return { ok: true, detail };
+  return { ok: false, detail: 'needs different permissions — try it yourself: ' + detail };
 }
 
 // --- commands ---
@@ -257,7 +267,7 @@ async function cmdSetup(): Promise<void> {
     gs.start('Installing globally…');
     const r = installGlobal();
     gs.stop(r.ok ? 'Installed — run `tabzero` directly from now on.' : 'Skipped the global install.');
-    if (!r.ok) log.warn(`Couldn't install globally (${r.detail}). Keep using \`npx tabzero\`.`);
+    if (!r.ok) log.warn(`Couldn't install globally (${r.detail}). Keep using \`npx ${GH_SPEC}\`.`);
   }
 
   if (await isDaemonUp()) {
@@ -269,7 +279,7 @@ async function cmdSetup(): Promise<void> {
     outro(`Data lives in ${DATA_DIR}. Starting the daemon — leave this running while you browse.`);
     startDaemon();
   } else {
-    outro('All set. Run `npx tabzero start` whenever you want the daemon running.');
+    outro(`All set. Run \`tabzero start\` (or \`npx ${GH_SPEC} start\`) whenever you want the daemon running.`);
   }
 }
 
@@ -308,13 +318,26 @@ async function cmdUninstall(): Promise<void> {
   // 1. The staged extension copy (always under ~/.tabzero).
   if (existsSync(EXT_DEST)) { rmSync(EXT_DEST, { recursive: true, force: true }); log.info('Removed the staged extension folder.'); }
 
-  // 2. All data — destructive, opt-in.
-  const wipe = bail(await confirm({
-    message: `Delete ALL Tab Zero data (${DATA_DIR}) — trails, memory, and your saved Engram key? This cannot be undone.`,
-    initialValue: false,
-  }));
-  if (wipe) { rmSync(DATA_DIR, { recursive: true, force: true }); log.success('All data deleted — clean state.'); }
-  else log.info(`Kept your data in ${DATA_DIR}.`);
+  // 2. Data is KEPT unless --purge is passed. Uninstalling is usually "stop running this", not "erase my
+  //    browsing history", and those should not share a keystroke. Everything needed to resume lives in
+  //    DATA_DIR — the database, the auth token, and (installed) the .env holding the Engram key and
+  //    user id — so leaving it means a reinstall continues from the same trails and the same Engram
+  //    memories instead of a blank slate.
+  if (!PURGE) {
+    log.info(
+      `Kept all your data in ${DATA_DIR}.\n`
+      + 'Reinstalling picks up exactly where you left off — same trails, same Engram memories.\n'
+      + 'To erase it instead: `tabzero uninstall --purge`.',
+    );
+  } else {
+    // --yes is the only way to consent without a TTY; absent it a non-interactive run must fail safe.
+    const wipe = ASSUME_YES || bail(await confirm({
+      message: `Delete ALL Tab Zero data (${DATA_DIR}) — trails, memory, and your saved Engram key? This cannot be undone.`,
+      initialValue: false,
+    }));
+    if (wipe) { rmSync(DATA_DIR, { recursive: true, force: true }); log.success('All data deleted — clean state.'); }
+    else log.info(`Kept your data in ${DATA_DIR}.`);
+  }
 
   // Best-effort: drop the global `tabzero` command if one was installed.
   const g = IS_REPO ? spawnSync('npm', ['unlink'], { stdio: 'ignore', cwd: PKG_ROOT }) : spawnSync('npm', ['rm', '-g', 'tabzero'], { stdio: 'ignore' });
@@ -332,7 +355,8 @@ function usage(): void {
     '  tabzero key [value]        Save your Weaviate Engram API key\n' +
     '  tabzero path               Print the extension folder to load unpacked\n' +
     '  tabzero version            Print the installed version\n' +
-    '  tabzero uninstall          Remove everything + (optionally) all data\n\n' +
+    '  tabzero uninstall          Stop running it; your trails are KEPT for a reinstall\n' +
+    '  tabzero uninstall --purge  …and erase all data too (add --yes to skip the prompt)\n\n' +
     'Query your browsing memory (for you, or any agent with a shell):\n' +
     '  tabzero search [query]     Search trails; empty query lists all, newest first\n' +
     '  tabzero trails [--all]     List trails; --all includes archived (quiet >30d)\n' +
@@ -348,7 +372,14 @@ function usage(): void {
 const argv = process.argv.slice(2);
 const JSON_OUT = argv.includes('--json');
 const SHOW_ALL = argv.includes('--all');
-const FLAGS = new Set(['--json', '--all']);
+// Non-interactive consent for the one destructive prompt. Without this, `uninstall` could not be
+// scripted OR tested: clack's confirm needs a TTY, and the only alternative was answering by hand.
+const ASSUME_YES = argv.includes('--yes') || argv.includes('-y');
+// Deleting the database is opt-IN via an explicitly named flag, not a prompt you can fat-finger. An
+// uninstall keeps your trails by default, so reinstalling resumes from the same database and the same
+// Engram scope rather than starting over.
+const PURGE = argv.includes('--purge');
+const FLAGS = new Set(['--json', '--all', '--yes', '-y', '--purge']);
 const [cmd, ...rest] = argv.filter((a) => !FLAGS.has(a));
 const arg = rest.join(' '); // let queries go unquoted: `tabzero search gpu pricing`
 

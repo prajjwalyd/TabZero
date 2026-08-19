@@ -6,6 +6,7 @@ import {
   listTrails, getTrailDetail, getTrail, resurrectUrls, searchTrails, weekInTabs, summarizeTrail, getInterests, deleteTrail,
 } from '../trails/trails.js';
 import { LLM_BACKEND } from '../core/llm.js';
+import { VERSION } from '../core/version.js';
 import { zeroCheckpoint } from '../trails/checkpoint.js';
 import { noteActivity } from './scheduler.js';
 import type { TabEventInput } from '../core/types.js';
@@ -110,6 +111,10 @@ export function startHttp(): http.Server {
       if (req.method === 'GET' && path === '/health') {
         return send(res, 200, {
           ok: true,
+          // The daemon's own version, so a client can notice it is running against a mismatched half.
+          // The extension is loaded unpacked and does NOT auto-update, so skew is the normal failure
+          // after an update — and without this it is completely invisible.
+          version: VERSION,
           token: TOKEN, // how the extension bootstraps auth; unreadable to web pages (no CORS headers)
           userId: getUserId(),
           engram: ENGRAM_ENABLED,

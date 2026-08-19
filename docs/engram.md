@@ -85,10 +85,10 @@ In the project settings, copy the **API key** (starts with `eng_…`).
 ## 4. Give it to Tab Zero
 
 ```bash
-npx tabzero key      # paste the eng_… key when prompted
+tabzero key          # paste the eng_… key when prompted
 ```
 
-Restart the daemon (`npx tabzero start`) and the memory layer lights up. Confirm it worked: the popup's status-dot tooltip shows `engram on`, and search results tagged **MEMORY** (green) are coming from Engram. Trail recaps show a local placeholder first, then **upgrade to Engram's `you`-toned recap** on the next read once its extraction lands (the pipeline is async).
+Restart the daemon (`tabzero start`) and the memory layer lights up. Confirm it worked: the popup's status-dot tooltip shows `engram on`, search results tagged **MEANING** (green) are coming from Engram, and the popup's **Interests** tab starts filling in. Trail recaps show a local placeholder first, then **upgrade to Engram's `you`-toned recap** on the next read once its extraction lands (the pipeline is async).
 
 ### Environment variables
 
@@ -125,5 +125,5 @@ Engram has **no delete-all** in its REST API, so a new `user_id` is how you get 
 - **Free tier:** 1,000 pipeline runs/month. Tab Zero pushes at trail/session grain (settle-gated + a per-trail re-push guard), never per tab — comfortably within budget for personal browsing.
 - **Privacy:** only page **titles**, **domains**, and the **public preview text** sites already publish (OpenGraph / meta description / the visible `h1`) are sent — never full page body, never anything you typed, never screenshots. Raw URLs stay local.
 - **Rebuildable:** the local DB (`~/.tabzero/tabzero.db`) is the source of truth, so your Engram memories can be fully replayed from it.
-- **Change the key later:** rerun `npx tabzero key`.
+- **Change the key later:** rerun `tabzero key`.
 - **Agent commands exposed:** `tabzero search`, `tabzero trail`, `tabzero resurrect`, `tabzero week`, `tabzero interests` (add `--json`).

@@ -1,5 +1,6 @@
 import { BACKEND, authHeaders } from './config.js';
 import { iconSvg, brandMark, STAT_ICON } from './icons.js';
+import { longestFitting } from './truncate.js';
 
 const api = {
   get: async (p: string) => fetch(BACKEND + p, { headers: await authHeaders() }).then((r) => r.json()),
@@ -15,7 +16,7 @@ interface Hit { trail: Trail; why: 'semantic' | 'keyword'; snippet?: string }
 interface Stat { key: string; label: string; value: string; detail?: string }
 interface Week { headline: string; stats: Stat[] }
 /** `source` is load-bearing: 'engram' is real cross-trail synthesis, 'local' is a weaker stand-in. */
-interface Interests { source: 'engram' | 'local'; interests: { label: string; detail?: string }[] }
+interface Interests { source: 'engram' | 'local'; interests: { label: string; detail?: string; updatedAt?: number }[] }
 
 // Display order + labels for category grouping (mirrors server/src/trails/categories.ts).
 const CAT_ORDER = ['dev', 'learning', 'news', 'social', 'media', 'shopping', 'travel', 'finance', 'work', 'projects', 'general'];
@@ -477,6 +478,37 @@ function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLE
   return row;
 }
 
+/**
+ * One line above search results explaining what the row tags mean.
+ *
+ * The tags themselves cannot carry the idea — two words in a 9px pill will not convey "this is the
+ * retrieval strategy that surfaced this row", and renaming them (keyword/memory -> text/meaning) did not
+ * fix that. Explaining it once, at the point of use, is what makes the pills read as shorthand for
+ * something already understood.
+ *
+ * Built from the kinds ACTUALLY present, not as a fixed legend: with Engram off every row is a text
+ * match, and defining a `meaning` tag that appears nowhere on screen is just noise. Shown only for
+ * search results — typing filters locally, produces no tags, and needs no legend.
+ */
+function searchLegend(hits: Hit[]): HTMLElement {
+  const kinds = new Set(hits.map((h) => h.why));
+  const wrap = el('div', 'search-legend');
+  const entry = (why: 'keyword' | 'semantic', explain: string) => {
+    if (!kinds.has(why)) return;
+    const semantic = why === 'semantic';
+    const item = el('span', 'legend-item');
+    const tag = el('span', 'match-tag ' + (semantic ? 'via-memory' : 'via-keyword'));
+    tag.innerHTML = iconSvg(semantic ? 'sparkle' : 'search', 10) +
+      `<span>${semantic ? 'meaning' : 'text'}</span>`;
+    item.appendChild(tag);
+    item.appendChild(el('span', 'legend-text', explain));
+    wrap.appendChild(item);
+  };
+  entry('keyword', 'your words matched');
+  entry('semantic', 'Engram matched the idea');
+  return wrap;
+}
+
 let searchSeq = 0;
 async function runSearch(q: string): Promise<void> {
   const main = $('main');
@@ -498,6 +530,7 @@ async function runSearch(q: string): Promise<void> {
     paint((out) => {
       if (!hits?.length) { out.appendChild(el('div', 'empty', `Nothing matched “${q}” yet.`)); return; }
       const sorted = (hits as Hit[]).slice().sort((a, b) => b.trail.lastActive - a.trail.lastActive);
+      out.appendChild(searchLegend(sorted));
       for (const h of sorted) out.appendChild(trailRow(h.trail, h.why, h.snippet, true));
     });
   } catch {
@@ -605,39 +638,92 @@ function paintInterests(data: Interests): void {
       // Engram is asked for "a short phrase led by the activity" but does not always comply — real
       // memories arrive as 250-character paragraphs. Clamped to three lines with a `more…` toggle
       // (attached below only where text is genuinely clipped) and the full text on hover.
-      const label = el('div', 'interest-label', it.label);
-      label.title = it.label;
-      row.appendChild(label);
-      if (it.detail) row.appendChild(el('div', 'interest-detail', it.detail));
+      row.appendChild(interestLabel(it.label));
+      const meta = [it.detail, it.updatedAt ? `updated ${rel(it.updatedAt)}` : ''].filter(Boolean).join(' · ');
+      if (meta) row.appendChild(el('div', 'interest-detail', meta));
       out.appendChild(row);
     }
   });
-  addMoreToggles();
+  fitInterestLabels(); // needs layout, so only after paint() has inserted the rows
 }
 
 /**
- * Attach a "more"/"less" toggle to any interest whose text is actually clipped.
+ * Collapsed interest text with the toggle INLINE, continuing the sentence: `…terminal ...more`.
  *
- * The ellipsis on a clamped label is drawn by `-webkit-line-clamp`, not by an element — so there is
- * nothing to click, and clicking it did nothing. This adds a real control.
+ * Done in JS rather than with `-webkit-line-clamp` because the clamp paints its own ellipsis and there is
+ * no way to suppress it — so a clamp plus a separate control gave two ellipses and put `more…` on its own
+ * line. Truncating the string ourselves means exactly one ellipsis, at the point where the text stops.
  *
- * Overflow has to be MEASURED, which means the rows must already be in the document: hence a pass after
- * paint() rather than a guess from character count, which would be wrong at any other popup width or
- * font size. Rows that fit get no button, so the affordance only appears where it does something.
+ * The budget is characters, not measured lines. A measured version would have to lay out, read back
+ * scrollHeight, and re-truncate to make room for the toggle on the last line — and would still only be
+ * right for one font size. At this popup's fixed width a character budget lands within a line either way,
+ * which is all the precision the effect needs.
  */
-function addMoreToggles(): void {
+/**
+ * Collapsed interest text: exactly three lines, with the toggle inline and continuing the sentence.
+ *
+ * Two things a character budget could not deliver, which is why this measures instead.
+ *
+ * 1. THREE LINES, GUARANTEED. A fixed character count is not a line count — 165 characters rendered as
+ *    four lines at this width. So the body is binary-searched against the element's real height: the
+ *    longest prefix whose rendered height still fits `MAX_LINES` wins. That also handles the toggle
+ *    wrapping onto a line of its own, because a wrapped toggle makes the element taller and the search
+ *    rejects that prefix automatically. No special case needed.
+ *
+ * 2. A VISIBLE SPACE before the toggle. A leading ordinary space inside an inline element is collapsible
+ *    whitespace and got eaten, giving `thought_signature)...more`. A non-breaking space cannot be
+ *    collapsed, so it always renders — and as a bonus it glues the toggle to the preceding word, so
+ *    `...more` can never end up stranded alone.
+ *
+ * Measuring requires layout, so this runs as a pass AFTER paint() has put the rows in the document.
+ */
+const MAX_LINES = 3;
+
+function interestLabel(text: string): HTMLElement {
+  const label = el('div', 'interest-label');
+  label.title = text;
+  label.dataset.full = text;
+  label.appendChild(el('span', 'interest-text', text));
+  label.appendChild(el('button', 'more-btn'));
+  return label;
+}
+
+
+function fitInterestLabels(): void {
   for (const label of document.querySelectorAll<HTMLElement>('.interest-label')) {
-    if (label.scrollHeight <= label.clientHeight + 1) continue; // fits — nothing is hidden
-    const row = label.closest('.interest');
-    if (!row) continue;
-    const btn = el('button', 'more-btn', 'more…');
-    btn.addEventListener('click', () => {
-      const open = row.classList.toggle('open');
-      btn.textContent = open ? 'less' : 'more…';
+    const full = label.dataset.full;
+    const body = label.querySelector<HTMLElement>('.interest-text');
+    const toggle = label.querySelector<HTMLButtonElement>('.more-btn');
+    if (!full || !body || !toggle) continue;
+
+    const lh = parseFloat(getComputedStyle(label).lineHeight) || 19;
+    const maxH = lh * MAX_LINES + 1; // +1 absorbs sub-pixel rounding
+
+    // Does the whole thing already fit? Then there is nothing to reveal and no toggle to show.
+    toggle.hidden = true;
+    body.textContent = full;
+    if (label.scrollHeight <= maxH) continue;
+
+    toggle.hidden = false;
+    toggle.textContent = '\u00A0...more';
+
+    // Longest prefix that still fits in MAX_LINES *including* the toggle.
+    const short = longestFitting(full, (candidate) => {
+      body.textContent = candidate;
+      return label.scrollHeight <= maxH;
     });
-    row.appendChild(btn);
+    body.textContent = short;
+
+    let open = false;
+    toggle.onclick = () => {
+      open = !open;
+      body.textContent = open ? full : short;
+      toggle.textContent = open ? '\u00A0less' : '\u00A0...more';
+    };
   }
 }
+
+
 
 let armed = false;
 async function onNuke(): Promise<void> {

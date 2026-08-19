@@ -426,7 +426,9 @@ export async function searchTrails(
 
 export interface InterestsResult {
   source: 'engram' | 'local';
-  interests: { label: string; detail?: string }[];
+  /** `updatedAt` is when Engram last rewrote the memory (ms), absent on the local fallback. Sent raw
+   *  rather than pre-formatted so the popup renders it with the same relative-time helper as trail rows. */
+  interests: { label: string; detail?: string; updatedAt?: number }[];
 }
 
 interface DurableTrail {
@@ -469,7 +471,13 @@ export async function getInterests(userId: string): Promise<InterestsResult> {
   if (cfg.ENGRAM_ENABLED) {
     const derived = await engramInterests(userId);
     if (derived.length) {
-      return { source: 'engram', interests: derived.slice(0, 8).map((d) => ({ label: d.content })) };
+      return {
+        source: 'engram',
+        interests: derived.slice(0, 8).map((d) => ({
+          label: d.content,
+          ...(d.updatedAt ? { updatedAt: d.updatedAt } : {}),
+        })),
+      };
     }
   }
   const now = Date.now();

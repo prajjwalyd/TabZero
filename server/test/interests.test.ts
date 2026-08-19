@@ -93,3 +93,48 @@ test('higher-scoring interests survive the cap', async () => {
   assert.equal(got[0].content, 'i0', 'best-scoring first');
   assert.ok(!got.some((g) => g.content === 'i13'), 'the weakest is what gets dropped');
 });
+
+// Engram returns `created_at` and `updated_at` on every memory, and both were being discarded. Because
+// both topics are BOUNDED — a memory is rewritten in place as understanding evolves — `updated_at` is
+// "when Engram last changed its mind", which is the only honest thing to show next to an interest.
+test('the last-updated timestamp is carried through from Engram', async () => {
+  (globalThis as any).fetch = async (url: string) => {
+    if (!String(url).endsWith('/memories/search')) return { ok: true, text: async () => '{}' };
+    return { ok: true, text: async () => JSON.stringify({ memories: [
+      { content: 'has both stamps', topic: 'ResearchInterest', properties: {}, score: 0.9,
+        created_at: '2026-07-01T00:00:00.000Z', updated_at: '2026-08-01T12:00:00.000Z' },
+      { content: 'created only', topic: 'ResearchInterest', properties: {}, score: 0.8,
+        created_at: '2026-06-15T06:00:00.000Z' },
+      { content: 'no stamps at all', topic: 'ResearchInterest', properties: {}, score: 0.7 },
+      { content: 'unparseable stamp', topic: 'ResearchInterest', properties: {}, score: 0.6,
+        updated_at: 'not a date' },
+    ] }) };
+  };
+  const byContent = new Map((await engramInterests('test-user')).map((i) => [i.content, i.updatedAt]));
+
+  assert.equal(byContent.get('has both stamps'), Date.parse('2026-08-01T12:00:00.000Z'),
+    'updated_at must win over created_at — it is the whole point');
+  assert.equal(byContent.get('created only'), Date.parse('2026-06-15T06:00:00.000Z'),
+    'fall back to created_at when a memory has never been rewritten');
+  assert.equal(byContent.get('no stamps at all'), null, 'absent stamp is null, not 0 or NaN');
+  assert.equal(byContent.get('unparseable stamp'), null, 'a garbage stamp must not become NaN');
+});
+
+test('getInterests only sets updatedAt when Engram actually gave one', async () => {
+  const { getInterests } = await import('../src/trails/trails.ts');
+  (globalThis as any).fetch = async (url: string) => {
+    if (!String(url).endsWith('/memories/search')) return { ok: true, text: async () => '{}' };
+    return { ok: true, text: async () => JSON.stringify({ memories: [
+      { content: 'stamped', topic: 'ResearchInterest', properties: {}, score: 0.9, updated_at: '2026-08-01T00:00:00.000Z' },
+      { content: 'unstamped', topic: 'ResearchInterest', properties: {}, score: 0.8 },
+    ] }) };
+  };
+  const r = await getInterests('test-user');
+  assert.equal(r.source, 'engram');
+  const stamped = r.interests.find((i) => i.label === 'stamped')!;
+  const unstamped = r.interests.find((i) => i.label === 'unstamped')!;
+  assert.equal(stamped.updatedAt, Date.parse('2026-08-01T00:00:00.000Z'));
+  // Omitted rather than null: the popup renders the line only when the key is present, so emitting a
+  // null would put a bare "updated" with nothing after it on screen.
+  assert.ok(!('updatedAt' in unstamped), 'an unstamped interest must omit the field entirely');
+});
