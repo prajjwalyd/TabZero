@@ -62,58 +62,45 @@ Every heuristic — canonicalize, dedup, sessionize, cluster, decay — is math 
 npx github:prajjwalyd/TabZero
 ```
 
-Tab Zero is distributed **straight from this repo**: `npx` installs from a git URL, and a `prepare` script compiles the daemon and bundles
-the extension on your machine. You need Node ≥ 22.5 and nothing else.
+Tab Zero isn't on npm — `npx` installs straight from this repo and a `prepare` script compiles it on your machine. A wizard stages the extension, takes a [Weaviate Engram key](docs/engram.md), and starts the daemon. Then:
 
-A guided wizard then stages the extension, takes a [Weaviate Engram key](docs/engram.md), and starts the daemon. Then:
+1. Open `chrome://extensions` (Chrome, Edge, Brave, Arc…) and enable **Developer mode**
+2. **Load unpacked** → the folder the wizard prints (`~/.tabzero/extension`)
+3. Pin **Tab Zero**, click it, and browse a bit — trails appear automatically
 
-1. Open `chrome://extensions` (Chrome, Edge, Brave, Arc…) and enable **Developer mode**.
-2. **Load unpacked** → the folder the wizard printed (`~/.tabzero/extension`).
-3. Pin **Tab Zero**, click it, and browse a bit — trails appear automatically.
+No key needed to start. Setup also makes `tabzero` a bare command, so after that it's just
+`tabzero start` · `key` · `path` · `help`.
 
-No key needed to start. Setup also makes `tabzero` a bare command (`npm i -g github:prajjwalyd/TabZero`),
-so afterwards it's just `tabzero start` · `tabzero key` · `tabzero path` · `tabzero uninstall` · `tabzero help`.
+### Updating
 
-`tabzero uninstall` stops Tab Zero running — it removes the staged extension copy and the global command
-— but **keeps every trail**. Reinstalling resumes from the same database, the same Engram memories, and the
-same saved key, because all of it lives in the data dir. To erase it instead: `tabzero uninstall --purge`
-(add `--yes` to skip the prompt, the only way to script it).
+| | |
+|---|---|
+| Daemon + CLI | re-run `npx github:prajjwalyd/TabZero` — npx re-resolves the git ref, so you always get the newest commit |
+| Extension | **not automatic** — `tabzero setup` re-stages it, then hit ↻ at `chrome://extensions` |
 
-### Run from source (dev)
+Unpacked extensions never auto-update, so move both halves together: a new daemon behind an old extension is the one combination that breaks. `GET /health` reports `version` if you want to check.
+
+### Uninstalling
+
+`tabzero uninstall` stops Tab Zero running and **keeps every trail** — reinstalling resumes from the same database, the same Engram memories, and the same saved key. Add `--purge` to erase that data instead (`--yes` skips the confirmation, and is the only way to script it).
+
+### Run from source
 
 ```bash
-pnpm install
-pnpm build:server        # compiles the daemon + CLI -> server/dist
-pnpm build:ext           # bundles the extension -> extension/dist
+pnpm install             # also builds, via the same `prepare` script
 pnpm backend             # start the daemon (keep it running)
 ```
 
-Load unpacked from `extension/dist`. Dev loop: `pnpm watch:ext` + `pnpm backend:dev`.
+Load unpacked from `extension/dist` instead. Dev loop: `pnpm watch:ext` + `pnpm backend:dev`. The `tabzero` command works from a clone too — `node bin/tabzero.js setup` runs `npm link` for you.
 
-`pnpm install` runs the same `prepare` build, so the `tabzero` command works from a clone straight away:
+Clone only to *develop* Tab Zero; to use it, the one-liner above is the whole story.
 
-```bash
-node bin/tabzero.js setup     # from the repo root — also runs `npm link` so `tabzero` works anywhere
-tabzero trails                # …and then the agent commands below work from any directory
-```
-
-Clone only to *develop* Tab Zero. To use it, `npx github:prajjwalyd/TabZero` is the whole story.
-
-**Demo data** (for screenshots / a first look, run with the daemon stopped):
-
-```bash
-pnpm seed                # add realistic demo trails on top of what's there
-pnpm seed --reset        # wipe events/pages/trails first, then seed
-pnpm seed --reset --enrich   # also run the LLM label + recap pass inline
-pnpm reset               # full fresh start: wipe the local DB (new user_id on next boot)
-```
-
-**Repairing a database from an older build** (dry run by default, so it shows you the diff first):
-
-```bash
-pnpm repair              # report what it would change, write nothing
-pnpm repair --apply      # back up, then fix it
-```
+| Command | Description |
+|---|---|
+| `pnpm seed` | realistic demo trails for screenshots (`--reset` wipes first, `--enrich` runs the LLM pass) |
+| `pnpm reset` | wipe the local DB — new `user_id`, clean Engram scope |
+| `pnpm repair` | fix a DB from an older build; dry run by default, `--apply` writes after backing up |
+| `pnpm test` | hermetic suite · `pnpm test:e2e` runs the full lifecycle against real LLM + Engram |
 
 ---
 
@@ -151,19 +138,9 @@ Add `--json` to any of them for machine-readable output:
 tabzero search "gpu pricing" --json
 ```
 
-They query the running daemon over HTTP, so `tabzero start` has to be up (it needs to be anyway, to
-capture anything). Exit code is non-zero with a message on stderr when it isn't.
-
-`tabzero` becomes a bare command when `setup` runs — `npm i -g github:prajjwalyd/TabZero`, or `npm link`
-when it detects it's running inside a clone. Before that, `npx github:prajjwalyd/TabZero <cmd>` works too.
+They query the running daemon over HTTP, so it has to be up — which it is anyway, or nothing is being captured. A failure is a non-zero exit and a message on stderr, never a silent empty result.
 
 Try it with any agent: _"resurrect my GPU pricing research"_ · _"what's my most abandoned trail this week?"_ · _"what have I been into lately?"_
-
----
-
-## Your week in tabs
-
-Wrapped-style stats derived entirely from tab metadata — deepest rabbit hole, boomerang page, biggest time sink, most-abandoned trail, late-night incident, tab-hoarding peak. Screenshot bait for the launch follow-up.
 
 ---
 
@@ -189,54 +166,42 @@ Env vars (all optional). In dev they load from `.env` at the repo root; installe
 
 Data lives in `./.tabzero/tabzero.db` (SQLite, WAL) in dev, or `~/.tabzero/tabzero.db` when installed.
 
-The daemon guards that database with four things, and it needs all four:
-
-- **binds `127.0.0.1` only** — never `0.0.0.0`, so nothing on your network can reach it;
-- **a per-install random token** (`randomUUID`, stored `0600`) on every route but `/health` — not a shared constant, so one leaked token isn't every install;
-- **no CORS headers**, so a web page can send a request but cannot read the reply;
-- **a `Host` allowlist** rejecting anything but loopback. This is what stops **DNS rebinding**: a page on `evil.com` re-resolved to `127.0.0.1` arrives as *same-origin*, where CORS is never consulted — so "no CORS headers" alone would have let it read `/health` and take the token. `server/test/http.test.ts` pins this.
-
-Bodies are capped at 4MB and malformed JSON is a `400`. Note that anything already holding the token can read and write your trails — treat it like a credential.
-
-**Two privacy layers sit in front of anything leaving the device**, separate from URL canonicalization (which is only a dedup key, never a privacy filter):
-
-- **Auth flows are never captured.** Sign-in, OAuth, password-reset, email-verification and checkout pages are dropped before anything is written.
-- **Secrets are stripped from what is captured.** `?token=`, `?code=`, `?email=`, session ids, presigned signatures and high-entropy values become `REDACTED`. Your search queries are deliberately preserved — they're the most useful signal a trail has.
-- **Titles and descriptions are scrubbed before they reach an LLM or Engram** — email addresses, JWTs, card-shaped numbers, encoded blobs. The topic itself is left intact, because a recap without specifics is worthless.
-- Page titles are treated as **untrusted input** in every prompt, since a site chooses its own title and could otherwise attempt prompt injection against a recap that agents later read.
-
 ---
 
 ## Repo layout
 
 ```
-server/         Node daemon + trail engine + Engram client + agent CLI (TypeScript)
-  src/
-    index.ts        daemon entrypoint (HTTP + scheduler)
-    cli.ts          the `tabzero` command (setup + the agent-facing query surface)
-    core/           config.ts, db.ts (schema + handle), types.ts, llm.ts (backend adapter)
-    capture/        canonical.ts   URL canonicalization + embedding-free lexical vectors
-                    redact.ts      privacy layer: refuse auth flows, strip secrets (NOT canonicalization)
-                    pipeline.ts    ingestion: redact -> canonicalize -> dedup -> tokenize -> cluster
-    trails/         trails.ts      read models, decay/liveness, LLM labels + recaps, search
-                    categories.ts  growable, LLM-driven category vocabulary
-                    checkpoint.ts  the "tab zero" moment: snapshot -> finalize -> flush
-    engram/         client.ts      defensive REST client for Weaviate Engram
-                    sync.ts        enrichment passes + Engram flush (settle-gated)
-    daemon/         http.ts        localhost API the extension talks to
-                    scheduler.ts   adaptive, backing-off enrichment scheduler
-    scripts/        seed.ts (demo data) · reset.ts (clean slate) · repair.ts (fix an old DB)
-  test/           hermetic units, all mutation-verified (`pnpm test`) — canonicalization, decay,
-                  clustering + replay, hybrid search, interest retrieval, redaction, the HTTP
-                  security boundary, and on-disk hardening
-                  e2e.mts — full lifecycle vs a real daemon + LLM + Engram (`pnpm test:e2e`)
-extension/      MV3 extension: capture (background) + popup UI (TypeScript, esbuild)
-  test/           the capture layer driven without a browser — queue, retry, crash mirror
-docs/           engram.md (Engram setup) · images/ (screenshots)
+server/src/
+  index.ts     daemon entrypoint (HTTP + scheduler)     cli.ts  the `tabzero` command
+  core/        config · db (schema) · types · llm       daemon/ http (localhost API) · scheduler
+  capture/     canonical (URL + lexical vectors) · redact (privacy) · pipeline (ingest → cluster)
+  trails/      trails (decay, labels, recaps, search) · categories · checkpoint ("tab zero")
+  engram/      client (REST) · sync (settle-gated enrichment + flush)
+  scripts/     seed (demo data) · reset (clean slate) · repair (fix an old DB)
+extension/src/ background (capture) · popup · content · zero — TypeScript, bundled by esbuild
+server/test/ + extension/test/   hermetic, every assertion mutation-verified
+docs/        engram.md · images/
 ```
+
+Reading order and the reasoning behind each design decision are in the code comments — they document *why*, including the bugs that shaped them.
 
 ---
 
-## Privacy
+## Security & privacy
 
-Tab **metadata + trails only — never screen recordings, never full page bodies.** Only page **titles**, **domains**, and the **public preview text** sites already publish (OpenGraph / meta description / the visible `h1`) are sent to your own Engram project; raw URLs and the event log stay **local**.
+**Nothing leaves your machine except page titles, domains, and the public preview text sites already publish** (OpenGraph / meta description / the visible `h1`) — sent only to *your own* Engram project, only with a key. Never screen recordings, never page bodies, never anything you typed. Raw URLs and the event log stay local.
+
+The daemon needs all four of these, and each covers what the others don't:
+
+- binds **`127.0.0.1` only**, never `0.0.0.0`
+- a **per-install random token** (`randomUUID`, `0600`) on every route but `/health`
+- **no CORS headers**, so a web page can send a request but not read the reply
+- a **`Host` allowlist** — this is what stops **DNS rebinding**, where a page on `evil.com` re-resolved to `127.0.0.1` arrives *same-origin* and CORS is never consulted. Without it, "no CORS" alone would have let any page read `/health` and take the token. Pinned by `server/test/http.test.ts`.
+
+On disk the data dir is `0700` and the DB, its `-wal`, the token and `.env` are `0600`, re-applied every start. `ENGRAM_BASE` must be `https://` — checked at boot, since every request carries your key alongside your titles. Bodies cap at 4MB. **Anything holding the token can read and write your trails — treat it like a credential.**
+
+A redaction layer sits in front of capture, separate from URL canonicalization (which is a dedup key, never a privacy filter):
+
+- **Auth flows are never captured** — sign-in, OAuth, password reset, email verification, checkout.
+- **Secrets are stripped from the rest** — `?token=`, `?code=`, `?email=`, session ids, presigned signatures, high-entropy values, and the same patterns inside *titles*. Search queries are kept on purpose: they're the most useful signal a trail has.
+- **Titles are scrubbed again before any LLM or Engram call** — addresses, JWTs, card-shaped numbers, encoded blobs — leaving the topic intact, since a recap without specifics is worthless. They're also treated as untrusted input in every prompt: a site picks its own title, and the recap it could poison is one your agents later read.
