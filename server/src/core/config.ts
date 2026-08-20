@@ -155,6 +155,10 @@ export const CLAUDE_MODEL = process.env.TABZERO_CLAUDE_MODEL || 'haiku';
 
 // Trail-engine tuning
 export const ASSIGN_THRESHOLD = 0.26; // min lexical cosine to join an existing trail
+// Below this many distinct tokens, a page's lexical evidence is discounted rather than trusted — see
+// the confidence factor in assignTrail. 18% of a real 123-page corpus falls under it (app shells,
+// "New chat", "Settings", bare domains).
+export const MIN_INFORMATIVE_TOKENS = 3;
 export const RECENCY_WINDOW_MS = 30 * 60 * 1000;
 export const RECENCY_BONUS = 0.15;
 export const MIN_TRAIL_PAGES = 2; // pages needed to graduate forming -> live

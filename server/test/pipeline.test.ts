@@ -351,3 +351,67 @@ test('deleting a trail removes its pages, its events, and its checkpoint members
   );
   assert.equal(await deleteTrail(id), null, 'deleting an already-deleted trail is a clean miss, not a throw');
 });
+
+// A page with almost no words must not be able to fuse two unrelated trails.
+//
+// Cosine cannot tell one shared word out of one from four out of five. Measured on real data: a page
+// titled just "Claude" tokenizes to `[claude]` and scored 0.3616 against a claude-heavy centroid —
+// higher than its genuinely related neighbours at 0.18-0.22. It joined, merged its token into that
+// centroid, pulled the centroid toward the bare word, and two unrelated topics ended up in one 23-page
+// trail. 18% of a real corpus is pages this thin: app shells, "New chat", "Settings", bare domains.
+test('a one-word page cannot join a trail on lexical similarity alone', async () => {
+  const t = T0 + 3_000_000;
+  // A substantial trail whose centroid is heavy on "keyboard".
+  nav(940, 'https://keebs.example.org/guides/keyboard-switch-lubing', 'Keyboard Switch Lubing Guide', t);
+  nav(940, 'https://keebs.example.org/guides/keyboard-plate-materials', 'Keyboard Plate Materials Compared', t + 1000);
+  const rich = trailOf('https://keebs.example.org/guides/keyboard-switch-lubing')!;
+  assert.ok(rich, 'fixture trail exists');
+
+  // Exactly one token: `kb` is too short to survive tokenizing and `.io` is stripped, so the whole
+  // vector is [keyboard]. Deliberately OUTSIDE the recency window, which is the real case — the pages
+  // that fused in production were a week apart. Inside the window the bonus still lets a thin page
+  // join, and that is intended: a page opened during the same sitting probably does belong to it.
+  nav(941, 'https://kb.io', 'Keyboard', t + 4 * 60 * 60 * 1000);
+  const thin = trailOf('https://kb.io');
+  assert.notEqual(thin, rich, 'a single shared word is not evidence of the same research');
+});
+
+test('...while a page with real overlap still joins', async () => {
+  // The positive control: without it the test above could pass by refusing every join.
+  const t = T0 + 3_100_000;
+  nav(950, 'https://brew.example.org/guides/espresso-grinder-burrs', 'Espresso Grinder Burr Geometry', t);
+  nav(950, 'https://brew.example.org/guides/espresso-grinder-alignment', 'Espresso Grinder Alignment', t + 1000);
+  const rich = trailOf('https://brew.example.org/guides/espresso-grinder-burrs')!;
+  nav(951, 'https://brew.example.org/guides/espresso-grinder-retention', 'Espresso Grinder Retention Test', t + 2000);
+  assert.equal(trailOf('https://brew.example.org/guides/espresso-grinder-retention'), rich,
+    'four shared topical words is exactly what should cluster');
+});
+
+test('a thin page opened FROM a trail still continues it', async () => {
+  // The exemption, and it is deliberate: tab lineage is real evidence where one shared word is not.
+  // "New chat" opened from a Claude tab belongs to that trail, and the opener path runs before any
+  // similarity is computed.
+  //
+  // The thin page shares NO token with the parent and sits hours later, so lexical similarity and the
+  // recency bonus are both ruled out — if it lands in the parent trail, the opener graph is the only
+  // thing that could have put it there.
+  const t = T0 + 3_200_000;
+  nav(960, 'https://notes.zettel.test/wiki/zettelkasten-method-basics', 'Zettelkasten Method Basics', t);
+  nav(960, 'https://notes.zettel.test/wiki/zettelkasten-linking-notes', 'Zettelkasten Linking Notes', t + 1000);
+  const parent = trailOf('https://notes.zettel.test/wiki/zettelkasten-method-basics')!;
+  nav(961, 'https://qq.io', 'Inbox', t + 5 * 60 * 60 * 1000, 960); // one token, spawned from tab 960
+  assert.equal(trailOf('https://qq.io'), parent,
+    'the opener graph must still carry a thin page into its parent trail');
+});
+
+// The confidence ratio itself. The behavioural tests above can be rescued by the recency bonus or the
+// opener graph, so they are weak guards for the constant — this pins it directly. K=3 was chosen by
+// replaying 7254 real events: at K=2 two unrelated topics still fused into one 20-page trail, and at
+// K=4 a genuine 5-page cricket trail fragmented into 3+2.
+test('evidence confidence discounts thin vectors and trusts everything else', async () => {
+  const { evidenceConfidence } = await import('../src/capture/pipeline.ts');
+  assert.ok(evidenceConfidence(1) < 0.5, 'a one-token page is barely evidence');
+  assert.ok(evidenceConfidence(2) < 1, 'two tokens is still discounted');
+  assert.equal(evidenceConfidence(3), 1, 'three tokens is where the discount stops');
+  assert.equal(evidenceConfidence(40), 1, 'and it never becomes a bonus above that');
+});

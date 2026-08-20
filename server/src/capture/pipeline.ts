@@ -197,6 +197,16 @@ function enrichTrailVector(trailId: string, tokens: string[], ts: number): void 
   ).run(JSON.stringify(cen), ts, trailId);
 }
 
+/**
+ * How much a page's lexical vector should be trusted, from how many distinct tokens it has.
+ *
+ * Exported so the ratio itself is testable: the behavioural tests around it can be rescued by the
+ * recency bonus or the opener graph, which makes them poor guards for the constant.
+ */
+export function evidenceConfidence(tokenCount: number): number {
+  return Math.min(1, tokenCount / cfg.MIN_INFORMATIVE_TOKENS);
+}
+
 function assignTrail(canon: Canon, tokens: string[], ev: TabEventInput): string {
   // Opener graph: a link-spawned tab almost always continues the opener's trail.
   const opener = ev.openerTabId ?? tabOpener.get(ev.tabId);
@@ -211,6 +221,7 @@ function assignTrail(canon: Canon, tokens: string[], ev: TabEventInput): string 
 
   // Otherwise leader-cluster against ALL trails (incl. dormant -> revival is automatic).
   const pv = bag(tokens);
+  const confidence = evidenceConfidence(tokens.length);
   const trails = db.prepare('SELECT id, centroid, last_active FROM trails').all() as {
     id: string;
     centroid: string;
@@ -224,7 +235,18 @@ function assignTrail(canon: Canon, tokens: string[], ev: TabEventInput): string 
     } catch {
       /* ignore */
     }
-    let score = cosine(pv, cen);
+    // Cosine has no notion of how much evidence it is working from: one shared word out of one token
+    // scores the same as four out of five. A page titled just "Claude" tokenizes to `[claude]` and
+    // scored 0.3616 against a claude-heavy centroid — higher than its genuinely related neighbours at
+    // 0.18-0.22 — so it joined, merged its token into that centroid, dragged the centroid toward the
+    // bare word, and made the next thin page easier to absorb. Two unrelated topics fused through a
+    // page carrying almost no information (measured: their centroids ended up at 0.2640, four
+    // thousandths over the threshold).
+    //
+    // So similarity is weighted by how much there is to be similar ABOUT. This deliberately does not
+    // touch the opener-graph path above: a thin "New chat" opened from a Claude tab genuinely continues
+    // that trail, and tab lineage is real evidence where one shared word is not.
+    let score = cosine(pv, cen) * confidence;
     // The bonus means "this trail was active shortly BEFORE this page", so it needs a non-negative
     // delta. Without the `dt >= 0` guard a trail whose last_active is newer than the incoming event
     // — routine with out-of-order events inside a batch, or a replayed one — collected the bonus for
