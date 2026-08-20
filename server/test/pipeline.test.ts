@@ -331,9 +331,13 @@ test('deleting a trail removes its pages, its events, and its checkpoint members
   assert.ok(pagesBefore >= 2, 'the fixture pages landed in one trail');
   assert.ok(eventsBefore > 0, 'its events are in the log to begin with');
 
-  const res = deleteTrail(id)!;
+  const res = (await deleteTrail(id))!;
   assert.equal(res.pages, pagesBefore, 'every page the trail held was counted');
   assert.equal(res.events, eventsBefore, 'every matching event row removed');
+  // Engram is off in this suite, so the remote half is a no-op that must still report cleanly rather
+  // than throw or hang the local delete.
+  assert.equal(res.engramDeleted, 0);
+  assert.equal(res.engramFailed, 0);
 
   const gone = (sql: string) => (db.prepare(sql).get(id) as { c: number }).c;
   assert.equal(gone('SELECT COUNT(*) c FROM trails WHERE id = ?'), 0, 'trail row gone');
@@ -345,5 +349,5 @@ test('deleting a trail removes its pages, its events, and its checkpoint members
     0,
     'no event still references the deleted page',
   );
-  assert.equal(deleteTrail(id), null, 'deleting an already-deleted trail is a clean miss, not a throw');
+  assert.equal(await deleteTrail(id), null, 'deleting an already-deleted trail is a clean miss, not a throw');
 });

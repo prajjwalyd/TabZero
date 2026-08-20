@@ -2,7 +2,7 @@ import { db, getUserId } from '../core/db.js';
 import { topTokens, provisionalLabel, type Vec } from '../capture/canonical.js';
 import { neutralize } from '../capture/redact.js';
 import { llmText } from '../core/llm.js';
-import { engramSearch, engramTrailMemory, engramInterests } from '../engram/client.js';
+import { engramSearch, engramTrailMemory, engramInterests, engramForgetTrail } from '../engram/client.js';
 import { categorize, resolveCategory, knownCategory, categoryPromptList } from './categories.js';
 import * as cfg from '../core/config.js';
 import type { TrailRow, PageRow, TrailDTO, PageDTO, TrailDetail, TrailStatus } from '../core/types.js';
@@ -81,6 +81,24 @@ export function listTrails(opts: { limit?: number; includeArchived?: boolean } =
     .sort((a, b) => b.liveness - a.liveness || b.lastActive - a.lastActive);
   if (opts.limit) dtos = dtos.slice(0, opts.limit);
   return dtos;
+}
+
+/**
+ * How many trails `listTrails` would show. Same predicate, in SQL, because counting them by building
+ * DTOs costs two queries per trail and /health is polled.
+ *
+ * It has to be the same predicate: /health's count is what the popup footer and the "tab zero" screen
+ * both display, and it used to be a bare `page_count >= 2` — no archive filter, so the screen announced
+ * 20 research trails above a list of 13. Any change to the archived rule belongs here and in statusFor
+ * together; the test pins them to each other.
+ */
+export function countListedTrails(now = Date.now()): number {
+  // statusFor archives at `days >= ARCHIVE_AFTER_DAYS`, so active is strictly newer than the cutoff.
+  const cutoff = now - cfg.ARCHIVE_AFTER_DAYS * 86_400_000;
+  const row = db
+    .prepare('SELECT COUNT(*) c FROM trails WHERE page_count >= ? AND last_active > ?')
+    .get(cfg.MIN_TRAIL_PAGES, cutoff) as { c: number };
+  return row.c;
 }
 
 export function trailPages(id: string): PageDTO[] {
@@ -194,6 +212,10 @@ export interface DeleteResult {
   ok: true;
   pages: number;
   events: number;
+  /** Engram memories removed for this trail — 0 when Engram is off or extraction never landed. */
+  engramDeleted: number;
+  /** Memories found but not accepted by Engram. Non-zero means an orphan is left behind. */
+  engramFailed: number;
 }
 
 /**
@@ -205,16 +227,21 @@ export interface DeleteResult {
  * readable in the file with `strings` — a user deleting browsing history means it, and the default
  * "mark free, overwrite eventually" behaviour would not deliver that.
  *
- * What this CANNOT do is delete the corresponding Engram memory: the REST API has no delete (which is
- * also why `pnpm reset` mints a fresh user_id for a clean scope). Callers must say so rather than imply
- * a remote purge — the popup's confirmation does.
+ * It deletes the Engram side too, via engramForgetTrail. That took a per-memory `DELETE /memories/{id}`
+ * and a search to find the id, because Engram has no filter or bulk endpoint — which is still why
+ * `pnpm reset` mints a fresh user_id rather than trying to purge a whole scope.
  *
  * Trail ids are never recycled (`nextTrailId` is monotonic), so a deleted id cannot later be reused and
  * silently inherit an old Engram memory scoped to it.
  */
-export function deleteTrail(id: string): DeleteResult | null {
+export async function deleteTrail(id: string): Promise<DeleteResult | null> {
   const t = getTrail(id);
   if (!t) return null;
+  // Engram's copy has to be found BEFORE the local rows go: the only way to locate a memory is to search
+  // for it (no filter endpoint), and the trail's own label and recap are what its memory ranks highest
+  // on. Read it now, delete it after the local commit — if the remote call fails, the trail is still
+  // gone locally, which is the half the user can see.
+  const hints = [`${t.label || ''} ${t.one_liner || ''}`, t.label || ''];
   const urls = (
     db.prepare('SELECT canonical_url FROM pages WHERE trail_id = ?').all(id) as unknown as {
       canonical_url: string;
@@ -238,7 +265,11 @@ export function deleteTrail(id: string): DeleteResult | null {
   } finally {
     db.exec('PRAGMA secure_delete = OFF'); // it costs on every later write; only the delete needs it
   }
-  return { ok: true, pages: urls.length, events };
+  // Awaited, not fired and forgotten: deleting is deliberate, confirmed and rare, and a caller that
+  // says "delete this" deserves to be told whether the remote copy actually went. A failure here leaves
+  // an orphan, which search already tolerates — see engramForgetTrail.
+  const engram = await engramForgetTrail(getUserId(), id, hints);
+  return { ok: true, pages: urls.length, events, engramDeleted: engram.deleted, engramFailed: engram.failed };
 }
 
 // ---------- enrichment (LLM, lazy + cached, heuristic fallback) ----------
@@ -429,36 +460,32 @@ export async function searchTrails(userId: string, query: string, limit = 5): Pr
   const out = new Map<string, TrailSearchHit>();
   const now = Date.now();
 
-  // Ask for more keyword candidates than we seed with, so the backfill below has something to draw on.
-  const local = searchLocal(query, limit * 2);
-
   /**
-   * Reserve slots for the semantic pass instead of letting keyword take them all.
+   * Enter means one thing: search my memory by MEANING.
    *
-   * This used to seed the map with a full `limit` of keyword hits, THEN add semantic ones. A Map keeps
-   * insertion order, so the trailing `slice(0, limit)` discarded every Engram hit whenever keyword
-   * search returned `limit` results — silently throwing away the only results Enter exists to find, in
-   * exactly the case where keyword search looked productive enough to fill the page.
+   * This used to be a hybrid — reserve some slots for keyword, some for Engram, backfill the rest —
+   * which duplicated work the UI already does better. Typing filters the trails on screen by literal
+   * text instantly, with no network; text matching is that path's whole job. Merging a second lexical
+   * pass in here meant every result had to carry a tag explaining which lane produced it, and a weak
+   * literal match could outrank a strong semantic one for no reason the user could see.
    *
-   * Precision still leads: the strongest keyword hits are seeded first, and anything semantic does not
-   * claim is backfilled below, so a hybrid search never returns fewer rows than keyword alone would.
+   * Engram's order is kept exactly as returned: it is the ranking, and callers render it as given.
    */
-  const seed = Math.max(1, Math.ceil(limit / 2));
-  for (const d of local.slice(0, seed)) out.set(d.id, { trail: d, why: 'keyword' });
-
   for (const hit of await engramSearch(userId, query)) {
     if (out.size >= limit) break;
     if (!hit.trailId) continue;
     const t = getTrail(hit.trailId);
-    if (!t || t.page_count < cfg.MIN_TRAIL_PAGES) continue; // same floor as the keyword pass
+    if (!t || t.page_count < cfg.MIN_TRAIL_PAGES) continue; // forming trails are hidden from the list too
     if (!out.has(t.id))
       out.set(t.id, { trail: toDTO(t, now), why: 'semantic', snippet: hit.content?.slice(0, 200) });
   }
 
-  // Engram may be off, still extracting, or simply have nothing to add — fill any slots it left.
-  for (const d of local.slice(seed)) {
-    if (out.size >= limit) break;
-    if (!out.has(d.id)) out.set(d.id, { trail: d, why: 'keyword' });
+  // ...but Enter must never be a dead end. With no Engram key (local mode) there is no semantic layer at
+  // all, and on a fresh install extraction has not landed yet — in both cases the lexical pass is the
+  // only thing that can answer, and unlike the on-screen filter it also reaches archived trails. Only
+  // ever a fallback: if Engram answered, its answer stands alone.
+  if (out.size === 0) {
+    for (const d of searchLocal(query, limit)) out.set(d.id, { trail: d, why: 'keyword' });
   }
 
   return [...out.values()].slice(0, limit);

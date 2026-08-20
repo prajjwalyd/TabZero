@@ -288,7 +288,7 @@ test('uninstall then reinstall resumes from the same database and the same ident
 // and its remedy was the command that had just failed. These pin the replacement against real npm
 // output — captured verbatim from `npm i -g github:prajjwalyd/TabZero` on a machine that had previously
 // run `npm link`, which is the failure everyone who developed from a clone will hit.
-const { explainGlobalFailure } = await import('../src/core/npm-error.js');
+const { explainGlobalFailure, planGlobalInstall } = await import('../src/core/global-command.js');
 const CMD = 'npm i -g github:prajjwalyd/TabZero';
 
 const NPM_ENOTDIR = `npm error code 236
@@ -329,4 +329,92 @@ test('an unrecognised failure quotes npm instead of inventing a cause', () => {
   assert.match(r.reason, /ENOTFOUND/, `must carry npm's own words: ${r.reason}`);
   // Bookkeeping lines are not a diagnosis.
   assert.doesNotMatch(r.reason, /^npm reported: (code|command|A complete log)/);
+});
+
+// ---- deciding whether to attempt a global install at all ----
+//
+// `npm i -g` on a git spec clones and builds: ~40 seconds. The wizard used to spend all of it before
+// discovering an `npm link` was in the way — the user answered yes, watched an unexplained pause, and got
+// an error, for a command that already worked. This is the pre-flight that makes that case instant.
+const PLAN = { pkgRoot: '/opt/tabzero', isRepo: false, spec: 'github:prajjwalyd/TabZero' };
+
+test('an existing `npm link` short-circuits: no install is attempted', () => {
+  const p = planGlobalInstall({ ...PLAN, link: '/Users/dev/GitHub/TabZero' });
+  assert.equal(p.action, 'skip', 'the install cannot succeed against a symlink — do not spend a minute on it');
+  assert.match(p.message, /already works/i, 'and the news is good: the command resolves');
+  assert.match(p.message, /\/Users\/dev\/GitHub\/TabZero/, 'name what it resolves to, since it is not this copy');
+  assert.deepEqual(p.fix, ['npm rm -g tabzero', 'npm i -g github:prajjwalyd/TabZero'],
+    'offer the handover, in the order that works');
+});
+
+test('a link to this very copy is simply already done', () => {
+  const p = planGlobalInstall({ ...PLAN, link: '/opt/tabzero' });
+  assert.equal(p.action, 'skip');
+  assert.equal(p.fix, undefined, 'nothing to hand over — it is already this copy');
+});
+
+test('an empty slot, or a real directory in it, installs', () => {
+  // null covers both: nothing there, and a normal installed directory, which npm replaces by itself.
+  assert.equal(planGlobalInstall({ ...PLAN, link: null }).action, 'install');
+});
+
+test('from a checkout, an older link is replaced rather than skipped', () => {
+  // `npm link` overwrites a link; only `npm i -g` chokes on one.
+  const p = planGlobalInstall({ ...PLAN, isRepo: true, link: '/Users/dev/some-other-clone' });
+  assert.equal(p.action, 'install');
+});
+
+// ---- resolving `tabzero resurrect <ref>` / `tabzero trail <ref>` ----
+//
+// Getting this wrong does not return a bad row, it reopens the wrong trail's tabs. Resolution used to be
+// "starts with t_ ? id : ask Engram", and Engram always answers — so a typo became a confident wrong
+// trail. Labels are now matched first, exactly, and only a real description reaches search.
+const { looksLikeId, pickByLabel } = await import('../src/core/trail-ref.js');
+
+const REFS = [
+  { id: 't_4', label: 'Lisbon September Getaway' },
+  { id: 't_9', label: 'RTX 5090 Gaming Build' },
+  { id: 't_12', label: 'Van Conversion Build Guide' },
+];
+
+test('an id is an id; a phrase that merely starts with t_ is not', () => {
+  assert.equal(looksLikeId('t_25'), true);
+  assert.equal(looksLikeId('  t_25  '), true, 'padding is not meaningful');
+  // The live bug: `/^t_/` accepted this and 404'd instead of searching for a t-shirt trail.
+  assert.equal(looksLikeId('t_shirt sizing'), false);
+  assert.equal(looksLikeId('t_'), false);
+  assert.equal(looksLikeId('trail 25'), false);
+});
+
+test('an exact label wins outright, whatever the casing', () => {
+  const p = pickByLabel(REFS, '  lisbon SEPTEMBER getaway ') as any;
+  assert.equal(p.kind, 'one');
+  assert.equal(p.ref.id, 't_4');
+  assert.equal(p.how, 'exact');
+});
+
+test('a fragment wins only when it names exactly one trail', () => {
+  const one = pickByLabel(REFS, 'lisbon') as any;
+  assert.equal(one.kind, 'one');
+  assert.equal(one.ref.id, 't_4');
+  assert.equal(one.how, 'substring');
+
+  // "Build" is in two labels, so it is not a reference to either — fall through to semantic search
+  // rather than guess between them.
+  assert.equal(pickByLabel(REFS, 'build').kind, 'none');
+});
+
+test('duplicate labels are reported, never silently picked', () => {
+  const dupes = [
+    { id: 't_1', label: 'Engram REST API' },
+    { id: 't_7', label: 'engram rest api' },
+  ];
+  const p = pickByLabel(dupes, 'Engram REST API') as any;
+  assert.equal(p.kind, 'ambiguous');
+  assert.equal(p.matches.length, 2, 'both candidates are offered so the user can pick an id');
+});
+
+test('a description matches no label and goes to semantic search', () => {
+  assert.equal(pickByLabel(REFS, 'that trip I was planning').kind, 'none');
+  assert.equal(pickByLabel(REFS, '   ').kind, 'none', 'empty input is not a match for everything');
 });

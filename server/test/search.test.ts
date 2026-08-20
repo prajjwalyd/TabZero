@@ -1,9 +1,10 @@
-// Hybrid search: the keyword pass and the Engram semantic pass have to SHARE the result slots.
+// What pressing Enter searches.
 //
-// The bug this pins: keyword hits were seeded first, up to the full limit, and semantic hits appended
-// after. A Map keeps insertion order, so the trailing `slice(0, limit)` discarded every Engram hit
-// whenever keyword search filled the page on its own — silently dropping the only results that pressing
-// Enter exists to surface, precisely when keyword search looked like it was working.
+// Enter is SEMANTIC search, and only that: the popup already filters the trails on screen by literal
+// text as you type, with no network. /search used to merge a lexical pass into the same result list,
+// which meant every row had to carry a tag naming the lane it came from, and a weak literal match could
+// outrank a strong semantic one. Now Engram's answer stands alone — with one deliberate exception, the
+// local-mode fallback below, because Enter must never be a dead end.
 //
 // Engram is reached through fetch(), so a stubbed fetch exercises the real client, the real merge, and
 // the real https check — no module mocking, same technique as the extension's capture test.
@@ -72,60 +73,62 @@ beforeEach(() => {
   semanticIds = [];
 });
 
-test('a semantic hit survives even when keyword search could fill every slot', async () => {
+test('Enter returns semantic hits only — never the literal matches typing already shows', () => {
+  // "espresso" matches six trails literally, so the old hybrid handed back a page that was mostly
+  // keyword rows. Those rows are exactly what the on-screen filter produces without a round trip.
   semanticIds = ['t_sem'];
-  const hits = await searchTrails('test-user', 'espresso', 5);
-
-  assert.equal(hits.length, 5, 'should still return a full page');
-  const ids = hits.map((h) => h.trail.id);
-  assert.ok(ids.includes('t_sem'), `the semantic-only trail was dropped: got ${ids.join(', ')}`);
-  const sem = hits.find((h) => h.trail.id === 't_sem')!;
-  assert.equal(sem.why, 'semantic', 'and it must be tagged as a meaning match, not a text match');
-  assert.ok(sem.snippet, 'a semantic hit carries the Engram snippet');
+  return searchTrails('test-user', 'espresso', 5).then((hits) => {
+    assert.deepEqual(hits.map((h) => h.trail.id), ['t_sem'], 'only Engram decides this list');
+    assert.equal(hits[0].why, 'semantic');
+    assert.ok(hits[0].snippet, 'and it carries the Engram snippet');
+  });
 });
 
-test('keyword precision still leads — the best literal matches are not crowded out', async () => {
+test('a literal match is not privileged just because the words line up', async () => {
   semanticIds = ['t_sem'];
-  const hits = await searchTrails('test-user', 'espresso', 5);
-  const kw = hits.filter((h) => h.why === 'keyword');
-  assert.ok(kw.length >= 3, `keyword should still hold most of the page, got ${kw.length}`);
-  // Reserving slots must not mean reserving them for nothing: with one semantic hit available, the
-  // remaining slots go back to keyword rather than being left empty.
-  assert.equal(hits.length, 5);
-});
-
-test('when Engram returns nothing, keyword backfills the reserved slots', async () => {
-  semanticIds = []; // Engram off / cold / nothing relevant
-  const hits = await searchTrails('test-user', 'espresso', 5);
-  assert.equal(hits.length, 5, 'a hybrid search must never return fewer rows than keyword alone would');
+  const hits = await searchTrails('test-user', 'espresso machine research 1', 5);
   assert.ok(
-    hits.every((h) => h.why === 'keyword'),
-    'all keyword when there is no semantic contribution',
+    !hits.some((h) => h.trail.id === 't_kw1'),
+    'the trail whose label IS the query must not appear unless Engram returned it',
   );
+});
+
+test('with Engram silent, Enter falls back to literal matching rather than nothing', async () => {
+  // No key (local mode), or extraction has not landed on a fresh install. A dead end here would make
+  // Enter look broken, and the lexical pass still reaches archived trails the on-screen filter cannot.
+  semanticIds = [];
+  const hits = await searchTrails('test-user', 'espresso', 5);
+  assert.equal(hits.length, 5, 'the fallback fills the page');
+  assert.ok(hits.every((h) => h.why === 'keyword'), 'and is tagged as the fallback it is');
   assert.equal(new Set(hits.map((h) => h.trail.id)).size, 5, 'no duplicates');
 });
 
-test('a semantic hit that duplicates a keyword hit is not listed twice', async () => {
-  semanticIds = ['t_kw1', 't_sem'];
+test('the fallback is a fallback — one semantic hit is enough to suppress it', async () => {
+  semanticIds = ['t_sem'];
   const hits = await searchTrails('test-user', 'espresso', 5);
+  assert.equal(hits.length, 1, `a single semantic hit stands alone: got ${hits.map((h) => h.trail.id).join(', ')}`);
+});
+
+test('the same trail returned twice by Engram is listed once', async () => {
+  semanticIds = ['t_sem', 't_sem', 't_kw1'];
+  const hits = await searchTrails('test-user', 'batman', 5);
   const ids = hits.map((h) => h.trail.id);
   assert.equal(new Set(ids).size, ids.length, `duplicate rows: ${ids.join(', ')}`);
-  assert.equal(hits.find((h) => h.trail.id === 't_kw1')!.why, 'keyword', 'first tag wins for a dupe');
 });
 
 test('an empty query lists trails rather than searching', async () => {
   const hits = await searchTrails('test-user', '   ', 5);
   assert.ok(hits.length > 0);
-  assert.ok(
-    hits.every((h) => h.why === 'list'),
-    'empty query is a list, not a match',
-  );
+  assert.ok(hits.every((h) => h.why === 'list'), 'empty query is a list, not a match');
 });
 
 test('a forming trail is not searchable, matching what the Trails list shows', async () => {
   // A one-page trail is `forming` — the deliberate noise filter for a single stray tab — and listTrails
   // hides it. Search used to select from ALL trails, so the same trail was invisible in the list yet
   // appeared in search results, which made the list look like it was concealing things.
+  //
+  // With no semanticIds set this runs the local-mode fallback; the test after it covers the same floor
+  // on the semantic path, and both need it — they are separate queries over the same table.
   db.prepare(
     `INSERT INTO trails (id, label, one_liner, created, last_active, centroid, page_count, session_count)
      VALUES ('t_forming', 'Espresso stray tab', 'A single espresso page', ?, ?, '{}', 1, 1)`,
@@ -147,4 +150,21 @@ test('Engram cannot reintroduce a forming trail through the semantic pass', asyn
   semanticIds = ['t_forming'];
   const ids = (await searchTrails('test-user', 'espresso', 10)).map((h) => h.trail.id);
   assert.ok(!ids.includes('t_forming'), `semantic pass bypassed the forming floor: ${ids.join(', ')}`);
+});
+
+// The order search results come back in IS the answer — the popup renders them as given. It used to
+// re-sort them by lastActive in the client, which discarded the ranking: a real query for "batman" had
+// Spider-Man Brand New Day first out of Engram at score 0.5, and recency pushed it below four trails
+// from that afternoon that matched nothing at all. This pins the contract the client now relies on.
+test('relevance order survives — the top semantic hit leads, even when it is the oldest trail', async () => {
+  // A query with no literal match anywhere, so the keyword pass contributes nothing and the order is
+  // purely Engram's. t_sem is the OLDEST trail in the fixture; t_kw1 is the newest.
+  semanticIds = ['t_sem', 't_kw1'];
+  const hits = await searchTrails('test-user', 'batman', 5);
+  assert.equal(hits.length, 2, `only Engram should contribute here: got ${hits.map((h) => h.trail.id).join(', ')}`);
+  assert.equal(hits[0].trail.id, 't_sem', "Engram's strongest hit must lead");
+  assert.ok(
+    hits[0].trail.lastActive < hits[1].trail.lastActive,
+    'and this only proves something because the leader is the older trail',
+  );
 });

@@ -66,11 +66,13 @@ export async function zeroCheckpoint(openUrls: string[]): Promise<ZeroResult> {
   // 4. Force-push everything stale to Engram right now (explicit intent bypasses the re-push guard).
   const { pushed } = await flushEngram({ force: true, limit: 50 });
 
-  const trailCount = (
-    db.prepare('SELECT COUNT(*) c FROM trails WHERE page_count >= ?').get(cfg.MIN_TRAIL_PAGES) as {
-      c: number;
-    }
-  ).c;
+  // The trails THESE tabs landed in. This used to be a global count of every trail in the database,
+  // which is a different question with a much bigger answer — 30 closed tabs belonged to 4 trails while
+  // this reported 20.
+  const trailCount = trailIds.filter((id) => {
+    const t = getTrail(id);
+    return !!t && t.page_count >= cfg.MIN_TRAIL_PAGES;
+  }).length;
 
   return {
     ok: true,

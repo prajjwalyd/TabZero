@@ -74,3 +74,58 @@ test('cosine: identical = 1, disjoint = 0, empty = 0 (never NaN)', () => {
   const partial = cosine(a, bag(['gpu', 'benchmark']));
   assert.ok(partial > 0 && partial < 1, `expected (0,1), got ${partial}`);
 });
+
+// Site identity is not topical evidence.
+//
+// A real merge from the live database: a cricket article joined a Spider-Man comics trail. The two pages
+// shared exactly two tokens — `wiki` from the URL path and `wikipedia` from the domain and the title
+// suffix — which is one fact ("this is a Wikipedia page") arriving three ways. That was worth cosine
+// 0.2265, just under the 0.26 assign threshold, and the recency bonus carried it over.
+//
+// Document frequency would not have caught it: `wiki` appears in ~3% of a real 123-page corpus, so it
+// looks informative, while `claude` at 16% looks like boilerplate. It needs a named list, not a
+// statistic.
+const SPIDER_WIKI = {
+  title: 'Spider-Man: Brand New Day - Wikipedia',
+  url: 'https://en.wikipedia.org/wiki/Spider-Man:_Brand_New_Day',
+};
+const SPIDER_SERP = {
+  title: 'spiderman brand new day - Google Search',
+  url: 'https://www.google.com/search?q=spiderman+brand+new+day',
+};
+const CRICKET_WIKI = {
+  title: 'New Zealand cricket team in India in 2025–26 - Wikipedia',
+  url: 'https://en.wikipedia.org/wiki/New_Zealand_cricket_team_in_India_in_2025%E2%80%9326',
+};
+const toks = (p: { title: string; url: string }) => tokenize(p.title, canonicalize(p.url)!);
+const ASSIGN_THRESHOLD = 0.26; // mirrors cfg; importing config.ts here would open the database
+
+test('two unrelated Wikipedia pages share no tokens at all', () => {
+  const a = toks(SPIDER_WIKI);
+  const b = toks(CRICKET_WIKI);
+  const shared = a.filter((w) => b.includes(w));
+  assert.deepEqual(shared, [], `nothing topical is in common, but got: ${shared.join(', ')}`);
+  assert.ok(!a.includes('wikipedia') && !a.includes('wiki'), 'the site name is not a token');
+});
+
+test('the cricket page cannot reach the Spider-Man trail on lexical similarity', () => {
+  const centroid = bag([...toks(SPIDER_WIKI), ...toks(SPIDER_SERP)]);
+  const score = cosine(bag(toks(CRICKET_WIKI)), centroid);
+  assert.ok(
+    score < ASSIGN_THRESHOLD,
+    `scored ${score.toFixed(4)}, which is at or above the ${ASSIGN_THRESHOLD} threshold`,
+  );
+  // Not just under the bar — nowhere near it, so the +0.15 recency bonus cannot carry it either.
+  assert.ok(score < ASSIGN_THRESHOLD - 0.15, `${score.toFixed(4)} is still within one recency bonus`);
+});
+
+test('...but two genuinely related Wikipedia pages still cluster', () => {
+  // The positive control. Without it the test above could pass by making Wikipedia pages match nothing,
+  // which would fragment every trail built from an encyclopaedia.
+  const other = {
+    title: 'Spider-Man: One More Day - Wikipedia',
+    url: 'https://en.wikipedia.org/wiki/Spider-Man:_One_More_Day',
+  };
+  const score = cosine(bag(toks(other)), bag([...toks(SPIDER_WIKI), ...toks(SPIDER_SERP)]));
+  assert.ok(score >= ASSIGN_THRESHOLD, `related pages must still join: scored ${score.toFixed(4)}`);
+});

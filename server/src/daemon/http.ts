@@ -12,6 +12,7 @@ import {
   summarizeTrail,
   getInterests,
   deleteTrail,
+  countListedTrails,
 } from '../trails/trails.js';
 import { LLM_BACKEND } from '../core/llm.js';
 import { VERSION } from '../core/version.js';
@@ -140,7 +141,9 @@ export function startHttp(): http.Server {
           userId: getUserId(),
           engram: ENGRAM_ENABLED,
           llm: LLM_BACKEND,
-          trails: count('SELECT COUNT(*) c FROM trails WHERE page_count >= 2'),
+          // Exactly what GET /trails would return, so the popup footer and the "tab zero" screen can
+          // never disagree with the list right above them.
+          trails: countListedTrails(),
           pages: count('SELECT COUNT(*) c FROM pages'),
         });
       }
@@ -175,7 +178,9 @@ export function startHttp(): http.Server {
       }
 
       if (req.method === 'DELETE' && m) {
-        const res2 = deleteTrail(m[1]);
+        // Awaited: this also removes the trail's Engram memory, and the response reports whether that
+        // part succeeded rather than leaving the caller to assume it did.
+        const res2 = await deleteTrail(m[1]);
         return res2 ? send(res, 200, res2) : send(res, 404, { error: 'not found' });
       }
 

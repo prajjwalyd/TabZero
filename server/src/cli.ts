@@ -3,14 +3,15 @@
 // may run on a Node that needs --experimental-sqlite. The daemon is launched as a child process with
 // that flag added when the Node version requires it, and the query commands go over HTTP to the
 // running daemon rather than opening the database a second time.
-import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, rmSync, lstatSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, platform } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { intro, outro, password, confirm, spinner, log, isCancel, cancel } from '@clack/prompts';
 import { ENV_PATH, DATA_DIR, PORT, TOKEN, hardenPath } from './core/config.js';
-import { explainGlobalFailure } from './core/npm-error.js';
+import { explainGlobalFailure, planGlobalInstall } from './core/global-command.js';
+import { looksLikeId, pickByLabel } from './core/trail-ref.js';
 import { VERSION } from './core/version.js';
 
 const REPO = 'https://github.com/prajjwalyd/TabZero';
@@ -179,20 +180,53 @@ function trailLine(t: any): string {
   return `${t.id}\t${t.label}  (${bits})`;
 }
 
-/** Resolve a trail id from an id or a natural-language description. */
+/**
+ * Resolve a trail id from an id, a label, or a description — in that order of certainty.
+ *
+ * Semantic search used to be the only path for anything that was not an id, which made naming a trail
+ * depend on an embedding: Engram always returns something, so a typo resolved to a confident wrong
+ * answer, and `resurrect` then reopens that trail's tabs. Labels are matched exactly first, and only a
+ * real description reaches search. Archived trails are included — reaching an old trail by name is
+ * exactly what this is for.
+ *
+ * How it resolved goes to stderr, so it is visible without polluting --json on stdout.
+ */
 async function resolveTrail(q: string): Promise<string> {
-  if (/^t_/.test(q)) return q;
-  const { hits } = await apiCall('/search', { method: 'POST', body: { query: q, limit: 1 } });
-  const id = hits?.[0]?.trail?.id;
-  if (!id) return fail(`No trail matched "${q}".`);
-  return id;
+  const query = q.trim();
+  if (looksLikeId(query)) return query;
+
+  const { trails } = await apiCall('/trails?archived=1');
+  const pick = pickByLabel(Array.isArray(trails) ? trails : [], query);
+  if (pick.kind === 'ambiguous') {
+    return fail(
+      `"${query}" matches ${pick.matches.length} trails — use an id:\n` +
+        pick.matches.map((m) => `  ${m.id}\t${m.label}`).join('\n'),
+    );
+  }
+  if (pick.kind === 'one') {
+    process.stderr.write(`matched ${pick.how === 'exact' ? 'label' : 'label fragment'}: ${pick.ref.label}\n`);
+    return pick.ref.id;
+  }
+
+  const { hits } = await apiCall('/search', { method: 'POST', body: { query, limit: 1 } });
+  const top = hits?.[0]?.trail;
+  if (!top?.id) return fail(`No trail matched "${query}".`);
+  process.stderr.write(`matched by meaning: ${top.label}\n`);
+  return top.id;
 }
 
 async function cmdSearch(query: string, json: boolean): Promise<void> {
   const { hits } = await apiCall('/search', { method: 'POST', body: { query, limit: 8 } });
-  emit(json, hits, () =>
-    hits.length ? hits.map((h: any) => `${trailLine(h.trail)}  [${h.why}]`).join('\n') : 'No trails matched.',
-  );
+  emit(json, hits, () => {
+    if (!hits.length) return 'No trails matched.';
+    const lines = hits.map((h: any) => trailLine(h.trail));
+    // Search is semantic; a `[semantic]` suffix on every line said nothing. The one case worth a word is
+    // the local-mode fallback, where there is no Engram to ask and these are literal matches instead.
+    if (hits.every((h: any) => h.why === 'keyword')) {
+      lines.push('', '(Engram is off — these are text matches, not meaning.)');
+    }
+    return lines.join('\n');
+  });
 }
 
 async function cmdTrails(json: boolean, includeArchived: boolean): Promise<void> {
@@ -253,6 +287,31 @@ function startDaemon(): void {
  * IS_REPO=false and took exactly that broken branch.
  */
 const GH_SPEC = 'github:prajjwalyd/TabZero';
+
+const realpathSafe = (p: string) => { try { return realpathSync(p); } catch { return p; } };
+
+/**
+ * The target of an existing `tabzero` SYMLINK in npm's global folder, or null.
+ *
+ * One `npm root -g` (a few hundred ms) in exchange for not spending forty seconds on an install that
+ * cannot succeed — see planGlobalInstall. Returns null on any doubt, so the fallback is always "just try
+ * the install", i.e. the previous behaviour.
+ */
+function globalLinkTarget(): string | null {
+  const r = spawnSync('npm', ['root', '-g'], { encoding: 'utf8' });
+  const root = r.status === 0 ? (r.stdout || '').trim() : '';
+  if (!root) return null;
+  try {
+    const p = join(root, 'tabzero');
+    return lstatSync(p).isSymbolicLink() ? realpathSync(p) : null;
+  } catch { return null; }
+}
+
+/** Does `tabzero` actually resolve on PATH? npm can install successfully to a prefix that isn't on it. */
+function commandResolves(): boolean {
+  const r = spawnSync('tabzero', ['version'], { stdio: 'ignore' });
+  return !r.error && r.status === 0;
+}
 
 type GlobalInstall = { ok: true } | { ok: false; reason: string; fix: string[] };
 
@@ -322,18 +381,38 @@ async function cmdSetup(): Promise<void> {
     }),
   );
   if (wantGlobal) {
-    const gs = spinner();
-    gs.start('Installing globally…');
-    const r = installGlobal();
-    // "Skipped" would be a lie here — the user said yes and we tried. Say it failed, say why, and give
-    // a command that is different from the one that just failed.
-    gs.stop(r.ok ? 'Installed — run `tabzero` directly from now on.' : 'Global install failed.');
-    if (!r.ok) {
-      log.warn(
-        `${r.reason}\n${bold('To fix it:')}\n` +
+    const plan = planGlobalInstall({
+      link: globalLinkTarget(), pkgRoot: realpathSafe(PKG_ROOT), isRepo: IS_REPO, spec: GH_SPEC,
+    });
+    if (plan.action === 'skip') {
+      // Answering yes and getting an instant, accurate answer — the command works either way.
+      log.success(plan.message);
+      if (plan.fix) {
+        log.info(`To hand the command to this copy instead:\n${plan.fix.map((c) => `  ${c}`).join('\n')}`);
+      }
+    } else {
+      const gs = spinner();
+      // Say how long: `npm i -g` on a git spec clones and builds, and an unexplained 40-second pause
+      // reads as a hang.
+      gs.start(IS_REPO ? 'Linking `tabzero`…' : 'Installing `tabzero` — clones and builds, up to a minute…');
+      const r = installGlobal();
+      // "Skipped" would be a lie here — the user said yes and we tried. Say it failed, say why, and give
+      // a command that is different from the one that just failed.
+      gs.stop(r.ok ? 'Installed — run `tabzero` directly from now on.' : 'Global install failed.');
+      if (!r.ok) {
+        log.warn(
+          `${r.reason}\n${bold('To fix it:')}\n` +
           r.fix.map((c) => `  ${c}`).join('\n') +
           `\nNothing is broken meanwhile — \`npx ${GH_SPEC}\` does everything \`tabzero\` does.`,
-      );
+        );
+      } else if (!commandResolves()) {
+        // npm reported success but the shim landed somewhere PATH doesn't look. Silence here is how you
+        // get "you're all set" followed by `command not found`.
+        log.warn(
+          'Installed, but `tabzero` does not resolve yet.\n' +
+          'Open a new shell, or add the `bin` folder inside `npm prefix -g` to your PATH.',
+        );
+      }
     }
   }
 

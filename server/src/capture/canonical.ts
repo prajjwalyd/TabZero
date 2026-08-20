@@ -24,7 +24,27 @@ const TRACKING_PARAMS = new Set([
   'source',
 ]);
 
+/**
+ * Words that name the SITE rather than the subject.
+ *
+ * Kept separate from STOP because the reason is different: these are not filler, they are real words
+ * that happen to describe where a page lives. `tokenize` mixes the domain and the URL path into the same
+ * bag as the title, so "this is a Wikipedia page" arrives up to three times — from `en.wikipedia.org`,
+ * from the `/wiki/` path, and from the `- Wikipedia` title suffix — and lands as topical evidence.
+ *
+ * MEASURED: a cricket article joined a Spider-Man trail on `wiki` + `wikipedia` alone, with no other
+ * word in common. Raw cosine 0.2265 (under the 0.26 threshold), which the recency bonus then carried
+ * over the line. Site identity is not lost by removing it here: trailDomains, topDomain and the category
+ * heuristic all read the domain directly.
+ *
+ * Note this is NOT a frequency problem and document frequency would not have found it — `wiki` appears
+ * in ~3% of a real 123-page corpus, which looks informative, while genuinely topical words like
+ * `claude` (16%) and `github` (13%) look like boilerplate by that measure.
+ */
+const SITE_WORDS = ['wiki', 'wikipedia'];
+
 const STOP = new Set([
+  ...SITE_WORDS,
   'the',
   'and',
   'for',

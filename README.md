@@ -18,7 +18,7 @@ Tab Zero watches your tab stream, reconciles it into semantic **research trails*
 
 - **Reach Tab Zero** — nuke every open tab in one click. Nothing is lost; every trail stays reconstructable.
 - **Resurrect** — reopen the exact tab constellation of any past trail, with a recap of _where you left off and what you concluded_.
-- **Search by meaning** — type to filter instantly; press Enter to search your whole memory semantically. Results are tagged `TEXT` (your words matched) or `MEANING`.
+- **Search by meaning** — type to filter what's on screen instantly, no network. Press Enter and the query goes to Engram: results come back ranked by meaning, so a trail that shares no words with what you typed still surfaces.
 - **Research interests** — the themes you keep returning to _across_ trails, synthesized by Engram. Not "a trail you visited twice".
 - **Query it from your agents** — a `tabzero` CLI exposes your browsing memory to Claude Code, Codex, opencode, or any agent with a shell.
 - **Your week in tabs** — deepest rabbit hole, most-abandoned trail, 3am incident, etc.
@@ -113,6 +113,7 @@ Clone only to *develop* Tab Zero; to use it, the one-liner above is the whole st
 | `pnpm seed` | realistic demo trails for screenshots (`--reset` wipes first, `--enrich` runs the LLM pass) |
 | `pnpm reset` | wipe the local DB — new `user_id`, clean Engram scope |
 | `pnpm repair` | fix a DB from an older build; dry run by default, `--apply` writes after backing up |
+| `pnpm prune:engram` | delete Engram memories whose trail is gone locally; dry run by default, `--apply` deletes |
 | `pnpm test` | hermetic suite · `pnpm test:e2e` runs the full lifecycle against real LLM + Engram |
 
 ---

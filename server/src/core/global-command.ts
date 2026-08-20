@@ -1,6 +1,6 @@
-// Turning a failed `npm` run into the one command that will actually fix it.
+// Making `tabzero` a bare command: deciding whether to even try, and explaining npm when it refuses.
 //
-// Its own module for the same reason as extension/src/truncate.ts: it is pure, and reaching it inside
+// Its own module for the same reason as extension/src/truncate.ts: this is pure, and reaching it inside
 // cli.ts is impossible from a test — cli.ts dispatches on argv at the top level, so importing it runs
 // the setup wizard.
 
@@ -42,5 +42,44 @@ export function explainGlobalFailure(output: string, cmd: string): { reason: str
   return {
     reason: line ? `npm reported: ${line}` : 'npm exited with an error.',
     fix: [cmd, '# full detail is in the npm log printed above'],
+  };
+}
+
+export type GlobalPlan =
+  | { action: 'install' }
+  | { action: 'skip'; message: string; fix?: string[] };
+
+/**
+ * Decide whether a global install is worth attempting at all.
+ *
+ * `npm i -g` a git spec clones and builds: roughly forty seconds. Spending that only to fail is the
+ * worst outcome the wizard had — the user answered yes, waited, and got an error. And there is one case
+ * where the failure is knowable up front and instant to detect: something already holds npm's global
+ * `tabzero` slot as a SYMLINK, left by `npm link` in a checkout. npm cannot rename a link out of the
+ * way, so the install is doomed before it starts — while the command the user wanted already works.
+ *
+ * `link` is the symlink's resolved target, or null when the slot is empty or holds a real directory (npm
+ * replaces those itself, so those go straight to install — including reinstalls and upgrades).
+ */
+export function planGlobalInstall(o: {
+  link: string | null;
+  pkgRoot: string;
+  isRepo: boolean;
+  spec: string;
+}): GlobalPlan {
+  const { link, pkgRoot, isRepo, spec } = o;
+  if (!link) return { action: 'install' };
+  // Linked to this very copy: the command already does exactly what was asked for.
+  if (link === pkgRoot) {
+    return { action: 'skip', message: '`tabzero` already runs this copy — nothing to install.' };
+  }
+  // From a checkout the command is `npm link`, which happily replaces an older link.
+  if (isRepo) return { action: 'install' };
+  // Linked elsewhere. `tabzero` works, but it is someone's dev checkout, not this install — say so
+  // rather than silently leaving them on code they did not just fetch, and never clobber it for them.
+  return {
+    action: 'skip',
+    message: `\`tabzero\` already works — it resolves to ${link}, linked there with \`npm link\`.`,
+    fix: ['npm rm -g tabzero', `npm i -g ${spec}`],
   };
 }

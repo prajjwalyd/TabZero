@@ -348,7 +348,7 @@ function paintTrails(list: Trail[]): void {
 
     if (!groupBy) {
       // Flat, latest-first — each row carries a category pill.
-      for (const t of sorted) out.appendChild(trailRow(t, undefined, undefined, true));
+      for (const t of sorted) out.appendChild(trailRow(t, undefined, true));
       return;
     }
 
@@ -381,10 +381,10 @@ function paintTrails(list: Trail[]): void {
  * Inline rather than `confirm()`: a modal dialog from an extension popup is jarring, and in some
  * contexts is suppressed entirely — which would turn a destructive action into a silent one.
  *
- * The wording is deliberately specific about scope. This deletes the trail, its pages, and the matching
- * rows in the raw event log, so it is a real local delete rather than a hide. It cannot delete the
- * memory Engram has already reconciled — Engram's REST API has no delete — and saying "deleted" without
- * that caveat would be a promise the product can't keep.
+ * The wording is deliberately specific about scope. This deletes the trail, its pages, the matching rows
+ * in the raw event log, AND the memory Engram reconciled for it — a real delete on both sides, not a
+ * hide. The note used to say Engram's copy stayed, because the API was believed to have no delete; it
+ * has a per-memory one, so the caveat became the inaccuracy instead.
  */
 function askDelete(row: HTMLElement, t: Trail): void {
   if (row.querySelector('.confirm')) return; // already asking
@@ -392,8 +392,8 @@ function askDelete(row: HTMLElement, t: Trail): void {
   const msg = el('div', 'confirm-msg');
   msg.innerHTML =
     `Delete <b>${t.label.replace(/</g, '&lt;')}</b> and its ${t.pageCount} page${t.pageCount === 1 ? '' : 's'}?` +
-    '<span class="confirm-note">Removes them from the local log too. Any memory Engram already ' +
-    'reconciled stays.';
+    '<span class="confirm-note">Removes the raw event log rows and the memory Engram built for it. ' +
+    'Cross-trail interests are not touched.';
   bar.appendChild(msg);
 
   const actions = el('div', 'confirm-actions');
@@ -428,7 +428,7 @@ function askDelete(row: HTMLElement, t: Trail): void {
   row.appendChild(bar);
 }
 
-function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLElement {
+function trailRow(t: Trail, snippet?: string, pill = false): HTMLElement {
   const row = el('div', 'trail ' + t.status);
 
   const top = el('div', 'trail-top');
@@ -473,20 +473,6 @@ function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLE
   meta.appendChild(
     el('span', 'meta-text', `${t.pageCount} pages · ${t.topDomain || '—'} · ${rel(t.lastActive)}`),
   );
-  // How this result surfaced (search only). The tag's job is to answer "why is this row here?", so it
-  // names the thing that matched — the words, or the meaning. It used to read "keyword" / "memory":
-  // "memory" is our internal word for the Engram layer and told the user nothing about the match, which
-  // is exactly the row they most need explained, since it shares no words with what they typed.
-  if (why) {
-    const semantic = why === 'semantic';
-    const tag = el('span', 'match-tag ' + (semantic ? 'via-memory' : 'via-keyword'));
-    tag.innerHTML =
-      iconSvg(semantic ? 'sparkle' : 'search', 11) + `<span>${semantic ? 'meaning' : 'text'}</span>`;
-    tag.title = semantic
-      ? "Found by meaning, not words — Engram's semantic memory matched this trail to your query"
-      : 'Found because your words appear in this trail';
-    meta.appendChild(tag);
-  }
   row.appendChild(meta);
 
   const detail = el('div', 'trail-detail');
@@ -567,34 +553,17 @@ function trailRow(t: Trail, why?: string, snippet?: string, pill = false): HTMLE
 }
 
 /**
- * One line above search results explaining what the row tags mean.
+ * Enter searches by meaning, so there is nothing to disambiguate and no legend to print: every row came
+ * from Engram. This replaces a two-entry TEXT/MEANING key plus a tag on every result — machinery that
+ * existed only because /search used to merge a lexical pass into the same list. Typing already filters
+ * by literal text, so that lane never needed a label either.
  *
- * The tags themselves cannot carry the idea — two words in a 9px pill will not convey "this is the
- * retrieval strategy that surfaced this row", and renaming them (keyword/memory -> text/meaning) did not
- * fix that. Explaining it once, at the point of use, is what makes the pills read as shorthand for
- * something already understood.
- *
- * Built from the kinds ACTUALLY present, not as a fixed legend: with Engram off every row is a text
- * match, and defining a `meaning` tag that appears nowhere on screen is just noise. Shown only for
- * search results — typing filters locally, produces no tags, and needs no legend.
+ * The one case that still needs a word is the fallback: with no Engram key there is no semantic layer,
+ * so Enter answers with literal matches instead, and calling that "search by meaning" would be a lie.
  */
-function searchLegend(hits: Hit[]): HTMLElement {
-  const kinds = new Set(hits.map((h) => h.why));
-  const wrap = el('div', 'search-legend');
-  const entry = (why: 'keyword' | 'semantic', explain: string) => {
-    if (!kinds.has(why)) return;
-    const semantic = why === 'semantic';
-    const item = el('span', 'legend-item');
-    const tag = el('span', 'match-tag ' + (semantic ? 'via-memory' : 'via-keyword'));
-    tag.innerHTML =
-      iconSvg(semantic ? 'sparkle' : 'search', 10) + `<span>${semantic ? 'meaning' : 'text'}</span>`;
-    item.appendChild(tag);
-    item.appendChild(el('span', 'legend-text', explain));
-    wrap.appendChild(item);
-  };
-  entry('keyword', 'your words matched');
-  entry('semantic', 'Engram matched the idea');
-  return wrap;
+function fallbackNote(hits: Hit[]): HTMLElement | null {
+  if (!hits.length || hits.some((h) => h.why !== 'keyword')) return null;
+  return el('div', 'search-note', 'Engram is off — showing text matches instead of meaning.');
 }
 
 let searchSeq = 0;
@@ -619,9 +588,16 @@ async function runSearch(q: string): Promise<void> {
         out.appendChild(el('div', 'empty', `Nothing matched “${q}” yet.`));
         return;
       }
-      const sorted = (hits as Hit[]).slice().sort((a, b) => b.trail.lastActive - a.trail.lastActive);
-      out.appendChild(searchLegend(sorted));
-      for (const h of sorted) out.appendChild(trailRow(h.trail, h.why, h.snippet, true));
+      // Server order, deliberately NOT re-sorted. This used to sort by lastActive, which threw away
+      // the ranking the search just computed: a query for "batman" put Spider-Man Brand New Day at
+      // Engram's top with score 0.5, then recency dropped it to last behind four trails from this
+      // afternoon that matched nothing. Recency is the right order for BROWSING the list; for a query
+      // the whole point is that the best match leads. searchTrails already interleaves keyword
+      // precision ahead of semantic reach — see the seed comment there.
+      const ranked = hits as Hit[];
+      const note = fallbackNote(ranked);
+      if (note) out.appendChild(note);
+      for (const h of ranked) out.appendChild(trailRow(h.trail, h.snippet, true));
     });
   } catch {
     if (seq !== searchSeq) return;
@@ -665,7 +641,7 @@ function filterLoaded(q: string): void {
       return;
     }
     const sorted = hits.slice().sort((a, b) => b.lastActive - a.lastActive);
-    for (const t of sorted) out.appendChild(trailRow(t, undefined, undefined, true));
+    for (const t of sorted) out.appendChild(trailRow(t, undefined, true));
     const hint = el('div', 'empty', 'Press Enter to search your full memory, including archived trails.');
     hint.style.paddingTop = '18px';
     out.appendChild(hint);

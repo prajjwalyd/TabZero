@@ -12,7 +12,7 @@ process.env.TABZERO_DATA = tmp;
 process.env.TABZERO_USER_ID = 'test-user';
 process.env.ENGRAM_API_KEY = ''; // never reach the network from a unit test
 
-const { computeLiveness, statusFor, listTrails, recapNeedsRefresh } = await import('../src/trails/trails.ts');
+const { computeLiveness, statusFor, listTrails, countListedTrails, recapNeedsRefresh } = await import('../src/trails/trails.ts');
 const { db } = await import('../src/core/db.ts');
 const cfg = await import('../src/core/config.ts');
 
@@ -145,4 +145,42 @@ test('a fresh LOCAL recap still needs refreshing while Engram is on', () => {
     assert.equal(recapNeedsRefresh(row(null, 0, null), engramOn), true, 'no recap yet');
     assert.equal(recapNeedsRefresh(row('stale', 1, 'engram'), engramOn), true, 'dirty recap');
   }
+});
+
+// The count the popup footer and the "tab zero" screen both display comes from /health, and it was a
+// bare `page_count >= 2` with no archive filter — so the screen announced "36 tabs closed. Saved as 20
+// research trails" directly above a list of 13. Two implementations of one predicate, drifted. This
+// pins them to each other; the boundary case is checked separately because that is where an off-by-one
+// between SQL and statusFor would hide.
+test('the /health count is exactly what the trail list shows', () => {
+  const now = Date.now();
+  const ins = db.prepare(
+    `INSERT INTO trails (id, label, created, last_active, centroid, page_count, session_count)
+     VALUES (?, ?, ?, ?, '{}', ?, 1)`,
+  );
+  const stale = now - (cfg.ARCHIVE_AFTER_DAYS + 3) * DAY;
+  ins.run('c_arch', 'Long gone', stale, stale, 6);
+  ins.run('c_live', 'Current', now, now, 6);
+  ins.run('c_form', 'One page', now, now, cfg.MIN_TRAIL_PAGES - 1);
+
+  const listed = listTrails().length;
+  assert.ok(
+    listTrails({ includeArchived: true }).length > listed,
+    'fixture must include an archived trail, or this asserts nothing',
+  );
+  assert.equal(countListedTrails(), listed, 'the count and the list must never disagree');
+});
+
+test('the archive cutoff falls on the same side for the count and for statusFor', () => {
+  const now = Date.now();
+  const ins = db.prepare(
+    `INSERT INTO trails (id, label, created, last_active, centroid, page_count, session_count)
+     VALUES (?, ?, ?, ?, '{}', 6, 1)`,
+  );
+  // Exactly at the boundary statusFor calls archived (`days >= ARCHIVE_AFTER_DAYS`).
+  const edge = now - cfg.ARCHIVE_AFTER_DAYS * DAY;
+  const before = countListedTrails(now);
+  ins.run('c_edge', 'Right on the line', edge, edge);
+  assert.equal(statusFor(6, edge, now), 'archived', 'statusFor archives at the boundary');
+  assert.equal(countListedTrails(now), before, 'so the count must not include it either');
 });

@@ -229,6 +229,13 @@ function assignTrail(canon: Canon, tokens: string[], ev: TabEventInput): string 
     // delta. Without the `dt >= 0` guard a trail whose last_active is newer than the incoming event
     // — routine with out-of-order events inside a batch, or a replayed one — collected the bonus for
     // free, and 0.15 is enough to drag a page over ASSIGN_THRESHOLD on one incidental shared token.
+    //
+    // That last sentence turned out to be literal: a cricket article joined a Spider-Man trail on raw
+    // cosine 0.2265 (under the bar) plus this bonus, where the whole 0.2265 came from `wiki` and
+    // `wikipedia`. The fix was to stop those being tokens at all — canonical.ts SITE_WORDS — rather than
+    // to weaken the bonus, which is what keeps one research session in one trail. If cross-topic merges
+    // show up again on genuinely topical words, this ratio (0.15 against a 0.26 threshold) is the next
+    // thing to look at, and the replay harness in that commit's notes is how to measure it.
     const dt = ev.ts - t.last_active;
     if (dt >= 0 && dt < cfg.RECENCY_WINDOW_MS) score += cfg.RECENCY_BONUS;
     if (!best || score > best.score) best = { id: t.id, score };

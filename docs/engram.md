@@ -118,7 +118,7 @@ To rebuild from scratch with new topic descriptions:
 3. `pnpm reset` — wipes the local DB. A fresh `user_id` is generated on next start (or pin one with `TABZERO_USER_ID`), giving a clean Engram scope.
 4. `pnpm seed` *(optional demo data)* → `pnpm backend`.
 
-Engram has **no delete-all** in its REST API, so a new `user_id` is how you get a clean slate — old memories stay orphaned under the previous id (harmless; search skips trails that no longer exist locally). Purge them in the console if you want the storage/quota back.
+Deleting a trail deletes its Engram memory too — `DELETE /memories/{id}`. For memories orphaned by deletes that predate this, run `pnpm prune:engram` — dry run by default, `--apply` to delete. It compares Engram against your local trails, and refuses when the local database is empty or when orphans outnumber live trails, because both look identical to "you are pointed at the wrong database".
 
 ## Notes
 

@@ -26,18 +26,32 @@ interface PostResult {
 }
 
 async function post(path: string, body: unknown): Promise<PostResult> {
+  return request('POST', path, body);
+}
+
+/**
+ * DELETE /memories/{id} — the only way to remove a memory. Verified against the live API: the route
+ * exists and answers 404 `memory not found` for an unknown id. There is no list or bulk endpoint
+ * (`GET /memories` is 405), so ids come from search.
+ */
+async function del(path: string): Promise<PostResult> {
+  return request('DELETE', path, undefined);
+}
+
+async function request(method: 'POST' | 'DELETE', path: string, body: unknown): Promise<PostResult> {
   const miss = (errorText = ''): PostResult => ({ ok: false, status: 0, json: null, errorText });
   if (!ENGRAM_ENABLED) return miss();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ENGRAM_TIMEOUT_MS);
   try {
     const r = await fetch(`${ENGRAM_BASE}${path}`, {
-      method: 'POST',
+      method,
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${ENGRAM_API_KEY}`,
       },
-      body: JSON.stringify(body),
+      // DELETE carries its parameters in the query string; a body would be ignored.
+      body: body === undefined ? undefined : JSON.stringify(body),
       signal: ctrl.signal,
     });
     const text = await r.text();
@@ -48,14 +62,14 @@ async function post(path: string, body: unknown): Promise<PostResult> {
       /* non-JSON */
     }
     if (!r.ok) {
-      console.error(`[engram] POST ${path} -> ${r.status} ${text.slice(0, 240)}`);
+      console.error(`[engram] ${method} ${path} -> ${r.status} ${text.slice(0, 240)}`);
       return { ok: false, status: r.status, json, errorText: text };
     }
     return { ok: true, status: r.status, json, errorText: '' };
   } catch (e) {
     const msg =
       (e as Error).name === 'AbortError' ? `timed out after ${ENGRAM_TIMEOUT_MS}ms` : (e as Error).message;
-    console.error(`[engram] POST ${path} failed: ${msg}`);
+    console.error(`[engram] ${method} ${path} failed: ${msg}`);
     return miss(msg);
   } finally {
     clearTimeout(timer);
@@ -92,6 +106,8 @@ export async function engramUpsertTrail(
 }
 
 export interface EngramHit {
+  /** The memory's own id. Required to delete it — there is no filter/bulk endpoint. */
+  id: string | null;
   content: string;
   trailId: string | null;
   topic: string | null;
@@ -116,12 +132,76 @@ export async function engramSearch(userId: string, query: string): Promise<Engra
   const items = res.json?.memories ?? res.json?.results ?? res.json?.data ?? [];
   if (!Array.isArray(items)) return [];
   return items.map((m: any) => ({
+    id: typeof m?.id === 'string' ? m.id : null,
     content: m?.content ?? m?.text ?? '',
     trailId: m?.properties?.trail_id ?? m?.trail_id ?? null,
     topic: m?.topic ?? null,
     score: typeof m?.score === 'number' ? m.score : null,
     updatedAt: parseTs(m?.updated_at ?? m?.updatedAt ?? m?.created_at ?? m?.createdAt),
   }));
+}
+
+/**
+ * Delete every Engram memory scoped to one trail — the remote half of deleting a trail locally.
+ *
+ * Without this, deleting a trail left its reconciled memory behind in Engram: it kept coming back in
+ * every semantic search (harmless only because searchTrails drops hits whose trail no longer exists,
+ * which is also how orphans were noticed), it kept occupying slots in the 10 results a search returns,
+ * and the content stayed in the project after the user asked for it to be gone. "Delete" has to mean
+ * delete on both sides.
+ *
+ * Finding the memories is the awkward part: Engram has no filter or list endpoint (`GET /memories` is
+ * 405), so ids can only come from search. Two probes, because search is semantic and ranked, not a
+ * query language — the trail's own text is what its own memory scores highest on, and the bare label is
+ * a second angle in case the recap drifted from the one-liner. Reads are free, so the redundancy is
+ * cheap insurance against leaving a memory behind.
+ *
+ * Only memories carrying THIS `trail_id` are touched. ResearchInterest memories are user-scoped with no
+ * trail_id, so they are structurally excluded — deleting one trail must not erase a cross-trail interest
+ * that many trails contributed to.
+ */
+/**
+ * Delete memories by id. Returns counts rather than throwing: a partial success is the normal outcome of
+ * a network hiccup mid-sweep, and the caller needs to report exactly how far it got.
+ *
+ * A 404 counts as deleted — already gone is the outcome we asked for, and treating it as an error would
+ * make a clean second run look broken.
+ */
+export async function engramDeleteMemories(
+  userId: string,
+  ids: Iterable<string>,
+): Promise<{ deleted: number; failed: number }> {
+  let deleted = 0;
+  let failed = 0;
+  for (const id of ids) {
+    const r = await del(`/memories/${encodeURIComponent(id)}?user_id=${encodeURIComponent(userId)}`);
+    if (r.ok || r.status === 404) deleted++;
+    else failed++;
+  }
+  return { deleted, failed };
+}
+
+export async function engramForgetTrail(
+  userId: string,
+  trailId: string,
+  hints: string[] = [],
+): Promise<{ deleted: number; failed: number }> {
+  if (!ENGRAM_ENABLED) return { deleted: 0, failed: 0 };
+  const probes = [...new Set(hints.map((h) => h.trim()).filter(Boolean))].slice(0, 2);
+  if (!probes.length) probes.push(trailId);
+
+  const ids = new Set<string>();
+  for (const q of probes) {
+    for (const h of await engramSearch(userId, q)) {
+      if (h.trailId === trailId && h.id) ids.add(h.id);
+    }
+  }
+
+  const { deleted, failed } = await engramDeleteMemories(userId, ids);
+  if (DEBUG || failed) {
+    console.error(`[engram] forget trail ${trailId}: ${ids.size} found, ${deleted} deleted, ${failed} failed`);
+  }
+  return { deleted, failed };
 }
 
 /**
