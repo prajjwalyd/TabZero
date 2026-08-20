@@ -26,6 +26,16 @@ export function explainGlobalFailure(output: string, cmd: string): { reason: str
       fix: ['npm rm -g tabzero', cmd],
     };
   }
+  // The registry does not have it: a fork, or a commit that predates the release. The remedy is npx with
+  // the repo spec — NOT `npm i -g` with it, which cannot work. npm's git-dep preparation skips the
+  // clone's devDependencies, so `prepare` has no compiler; npx takes a different path that installs them,
+  // which is why one works and the other never will. Verified both ways.
+  if (/E404|404 Not Found|is not in this registry/i.test(output)) {
+    return {
+      reason: 'that package is not on the npm registry (yet).',
+      fix: ['npx github:prajjwalyd/TabZero', '# runs straight from the repo; no global install needed'],
+    };
+  }
   if (/EACCES|EPERM/.test(output)) {
     return {
       reason: "npm's global folder is not writable by you.",

@@ -1,0 +1,35 @@
+# Publish to npm when a version tag is pushed.
+#
+#   pnpm version patch   # or minor / major — commits and tags
+#   git push --follow-tags
+#
+# `prepublishOnly` builds before packing, and `files` limits the tarball to bin, the two dist trees,
+# scripts and the readme — so nothing has to be committed for an install to work.
+name: publish
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write # for npm provenance: a verifiable link from the tarball back to this workflow run
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org # writes the .npmrc that NODE_AUTH_TOKEN feeds
+      - run: pnpm install --frozen-lockfile
+      # Never publish something that does not typecheck or pass its tests.
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

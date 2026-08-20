@@ -2,7 +2,7 @@
   "name": "tabzero",
   "version": "0.1.0",
   "type": "module",
-  "description": "Close every tab guilt-free. Your browser remembers why and any agent can resurrect it. Built on Weaviate Engram.",
+  "description": "Close every tab guilt-free. Your browser remembers why they mattered and any agent can resurrect it.",
   "license": "MIT",
   "author": "Prajjwal Yadav (https://github.com/prajjwalyd)",
   "repository": {
@@ -33,6 +33,7 @@
     "bin",
     "server/dist",
     "extension/dist",
+    "scripts",
     "README.md"
   ],
   "engines": {
@@ -49,7 +50,7 @@
     "build:ext": "cd extension && node build.mjs",
     "watch:ext": "cd extension && node build.mjs --watch",
     "build": "pnpm run build:server && pnpm run build:ext",
-    "prepare": "tsc -p server/tsconfig.json && cd extension && node build.mjs",
+    "prepare": "node scripts/prepare.mjs",
     "typecheck": "tsc -p server/tsconfig.json --noEmit && tsc -p extension/tsconfig.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

@@ -6,12 +6,13 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, rmSync, lstatSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { homedir, platform } from 'node:os';
+import { homedir, platform, userInfo } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
-import { intro, outro, password, confirm, spinner, log, isCancel, cancel } from '@clack/prompts';
+import { intro, outro, password, text, confirm, spinner, log, isCancel, cancel } from '@clack/prompts';
 import { ENV_PATH, DATA_DIR, PORT, TOKEN, hardenPath } from './core/config.js';
 import { explainGlobalFailure, planGlobalInstall } from './core/global-command.js';
 import { looksLikeId, pickByLabel } from './core/trail-ref.js';
+import { isValidUserId, normalizeUserId, suggestUserId } from './core/user-id.js';
 import { VERSION } from './core/version.js';
 
 const REPO = 'https://github.com/prajjwalyd/TabZero';
@@ -114,6 +115,74 @@ function stageExtension(): string | null {
   mkdirSync(dirname(EXT_DEST), { recursive: true });
   cpSync(EXT_SRC, EXT_DEST, { recursive: true });
   return EXT_DEST;
+}
+
+/** The daemon's current identity, if it happens to be running. Best-effort — this is only for display. */
+async function runningUserId(): Promise<string | null> {
+  try {
+    const r = await fetch(`http://127.0.0.1:${PORT}/health`, { signal: AbortSignal.timeout(700) });
+    const j: any = await r.json();
+    return typeof j?.userId === 'string' ? j.userId : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Name the memory scope.
+ *
+ * Asked for the same reason the Engram key is: without it db.ts mints `u_<uuid>`, which is correct but
+ * unrecognisable in the Engram console and impossible to reproduce on a second machine. It is written to
+ * the same .env as the key, before the daemon first starts, because db.ts only mints an id when
+ * TABZERO_USER_ID is absent.
+ *
+ * Renaming an EXISTING install is a different act — the old scope keeps its memories and the new one
+ * starts empty — so an install that already has an identity is told that plainly instead of being
+ * silently re-pointed.
+ */
+async function askUserId(): Promise<void> {
+  const existing = process.env.TABZERO_USER_ID;
+  if (existing) {
+    log.info(`Memory scope: ${bold(existing)}  (from ${ENV_PATH})`);
+    return;
+  }
+  const live = await runningUserId();
+  const hasData = existsSync(join(DATA_DIR, 'tabzero.db'));
+  if (hasData) {
+    log.info(
+      `${bold('This install already has a memory scope')}${live ? `: ${live}` : ''}.\n` +
+        'Renaming it starts a fresh, empty memory — the old trails and Engram memories stay under the old\n' +
+        'name. Press Enter to keep what you have.',
+    );
+  } else {
+    log.info(
+      `${bold('Name your memory')} — it scopes every trail and every Engram memory.\n` +
+        'Skip it and you get a random id like u_26c82533-5771-…, which is unrecognisable in the Engram\n' +
+        'console and cannot be reproduced on another machine.',
+    );
+  }
+  const answer = bail(
+    await text({
+      message: hasData ? 'New name, or Enter to keep the current scope' : 'A name for your memory',
+      placeholder: hasData ? 'leave empty to keep' : suggestUserId(userInfo().username),
+      initialValue: hasData ? '' : suggestUserId(userInfo().username),
+      validate: (v) => {
+        const t = normalizeUserId(String(v ?? ''));
+        if (!t) return hasData ? undefined : 'Pick a name — this is how your memories are addressed.';
+        if (!isValidUserId(t)) {
+          return 'Letters, digits, dot, dash or underscore; 2-64 characters; must start with a letter or digit.';
+        }
+        return undefined;
+      },
+    }),
+  );
+  const chosen = normalizeUserId(String(answer ?? ''));
+  if (!chosen) {
+    log.info('Keeping the existing memory scope.');
+    return;
+  }
+  saveEnv('TABZERO_USER_ID', chosen);
+  log.success(`Memories are scoped to ${bold(chosen)}.`);
 }
 
 async function askEngramKey(): Promise<void> {
@@ -281,11 +350,15 @@ function startDaemon(): void {
 /**
  * Make `tabzero` a bare command.
  *
- * From a clone, `npm link` from the repo root. Otherwise install from GitHub — NOT `npm i -g tabzero`,
- * which is what this used to do and which 404s: Tab Zero is distributed straight from the repo, not
- * through the npm registry. `files` deliberately excludes tsconfig.base.json, so a GitHub install has
- * IS_REPO=false and took exactly that broken branch.
+ * From a clone, `npm link` from the repo root. Otherwise from the npm registry.
+ *
+ * This deliberately does NOT install the GitHub spec, even though that is what the wizard itself may be
+ * running under. npm's git-dep preparation never installs the clone's devDependencies, so `prepare` has
+ * no compiler and the install dies with `sh: tsc: command not found` — a failure no retry can fix. The
+ * registry has no such problem: the tarball is already built. GH_SPEC survives as the documented fallback
+ * for a fork or a commit that has not been released yet.
  */
+const PKG_NAME = 'tabzero';
 const GH_SPEC = 'github:prajjwalyd/TabZero';
 
 const realpathSafe = (p: string) => { try { return realpathSync(p); } catch { return p; } };
@@ -316,8 +389,8 @@ function commandResolves(): boolean {
 type GlobalInstall = { ok: true } | { ok: false; reason: string; fix: string[] };
 
 function installGlobal(): GlobalInstall {
-  const args = IS_REPO ? ['link'] : ['i', '-g', GH_SPEC];
-  const cmd = IS_REPO ? 'npm link' : `npm i -g ${GH_SPEC}`;
+  const args = IS_REPO ? ['link'] : ['i', '-g', PKG_NAME];
+  const cmd = IS_REPO ? 'npm link' : `npm i -g ${PKG_NAME}`;
   // Piped, not ignored: the output IS the diagnosis. Without it the only honest message would be
   // "something went wrong", and the only honest remedy "try again".
   const r = spawnSync('npm', args, { cwd: IS_REPO ? PKG_ROOT : undefined, encoding: 'utf8' });
@@ -365,6 +438,7 @@ async function cmdSetup(): Promise<void> {
   );
   if (reveal) openExternal(dest);
 
+  await askUserId();
   await askEngramKey();
 
   log.step(
@@ -403,7 +477,7 @@ async function cmdSetup(): Promise<void> {
         log.warn(
           `${r.reason}\n${bold('To fix it:')}\n` +
           r.fix.map((c) => `  ${c}`).join('\n') +
-          `\nNothing is broken meanwhile — \`npx ${GH_SPEC}\` does everything \`tabzero\` does.`,
+          `\nNothing is broken meanwhile — \`npx ${PKG_NAME}\` does everything \`tabzero\` does.`,
         );
       } else if (!commandResolves()) {
         // npm reported success but the shim landed somewhere PATH doesn't look. Silence here is how you
@@ -429,6 +503,55 @@ async function cmdSetup(): Promise<void> {
       `All set. Run \`tabzero start\` (or \`npx ${GH_SPEC} start\`) whenever you want the daemon running.`,
     );
   }
+}
+
+/**
+ * Name (or rename) the memory scope outside the wizard — the sibling of `tabzero key`.
+ *
+ * Renaming does not migrate anything: Engram memories are addressed by user_id, and the local database
+ * keys its own identity the same way. The old scope keeps its trails, the new one starts empty. That is
+ * stated rather than discovered, and it needs a yes.
+ */
+async function cmdUser(value?: string): Promise<void> {
+  intro('Memory scope');
+  const current = process.env.TABZERO_USER_ID || (await runningUserId());
+  if (current) log.info(`Currently: ${bold(current)}`);
+
+  let name = value;
+  if (!name) {
+    name = bail(
+      await text({
+        message: 'Name for your memory',
+        initialValue: current && isValidUserId(current) ? current : suggestUserId(userInfo().username),
+      }),
+    ) as string;
+  }
+  const chosen = normalizeUserId(name || '');
+  if (!chosen) {
+    cancel('No name entered.');
+    process.exit(0);
+  }
+  if (!isValidUserId(chosen)) {
+    return fail('Letters, digits, dot, dash or underscore; 2-64 characters; must start with a letter or digit.');
+  }
+  if (chosen === current) {
+    outro(`Already scoped to ${chosen} — nothing to change.`);
+    return;
+  }
+  if (current) {
+    const ok = bail(
+      await confirm({
+        message: `Rename ${current} -> ${chosen}? The old scope keeps its trails and Engram memories; this one starts empty.`,
+        initialValue: false,
+      }),
+    );
+    if (!ok) {
+      cancel('Left unchanged.');
+      process.exit(0);
+    }
+  }
+  saveEnv('TABZERO_USER_ID', chosen);
+  outro(`Saved to ${ENV_PATH}. Restart the daemon to pick it up.`);
 }
 
 async function cmdKey(value?: string): Promise<void> {
@@ -517,6 +640,7 @@ function usage(): void {
       '  tabzero                    Interactive setup (extension + optional Engram key), then start\n' +
       '  tabzero start              Start the local daemon\n' +
       '  tabzero key [value]        Save your Weaviate Engram API key\n' +
+      '  tabzero user [name]        Name the memory scope (every trail + Engram memory)\n' +
       '  tabzero path               Print the extension folder to load unpacked\n' +
       '  tabzero version            Print the installed version\n' +
       '  tabzero uninstall          Stop running it; your trails are KEPT for a reinstall\n' +

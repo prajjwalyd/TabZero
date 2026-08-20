@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # version comes from `packageManager` in package.json
+      - uses: actions/setup-node@v4
+        with:
+          # node:sqlite is flagless from 24; `engines` allows 22.5+, where it needs
+          # --experimental-sqlite (the daemon adds that itself when spawning).
+          node-version: 24
+          cache: pnpm
+      # `prepare` runs here and builds, so this also asserts the build works from a clean checkout with
+      # only the locked dependency versions.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      # The hermetic suite only. `pnpm test:e2e` needs a real Engram key and a real LLM, so it stays local.
+      - run: pnpm test

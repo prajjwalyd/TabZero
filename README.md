@@ -8,7 +8,7 @@
 
 _Reconciled memory powered by [Weaviate Engram](https://weaviate.io/product/engram)._
 
-<img src="docs/images/hero.png" alt="Tab Zero — a browser full of tabs collapsing into a calm 'Tab Zero. Nothing lost.' screen" width="820" />
+<img src="docs/images/hero.png" alt="Tab Zero — a browser full of tabs collapsing into a calm 'Tab Zero. Nothing lost.' screen" width="560" />
 
 </div>
 
@@ -28,6 +28,31 @@ The exact-reopen source of truth is a local SQLite log; the reconciled, evolving
 <div align="center">
 <img src="docs/images/popup-trails.png" alt="Tab Zero popup showing reconciled research trails with category pills" width="560"/>
 </div>
+
+---
+
+## Prerequisites
+
+- **Node ≥ 22.5** (uses the built-in `node:sqlite`) and **pnpm**.
+- Optional — a **Weaviate Engram** project + API key for the memory layer. Without it, Tab Zero runs in **local mode**: trails, keyword search, categories, gated interests, and "your week in tabs" all still work.
+- Optional — an **LLM** for prose. If `OPENROUTER_API_KEY` is set it's used; otherwise Tab Zero shells out to a local **`claude`** (`claude -p`) if installed; otherwise it falls back to heuristic labels/summaries.
+
+---
+
+## Quick start
+
+```bash
+npx tabzero
+```
+
+A wizard names your memory, stages the extension, takes an optional [Weaviate Engram key](docs/engram.md), and starts the daemon. Then:
+
+1. Open `chrome://extensions` (Chrome, Edge, Brave, Arc…) and enable **Developer mode**
+2. **Load unpacked** → the folder the wizard prints (`~/.tabzero/extension`)
+3. Pin **Tab Zero**, click it, and browse a bit — trails appear automatically
+
+No key needed to start. Setup also offers to install `tabzero` as a bare command, so after that it's just
+`tabzero start` · `user` · `key` · `path` · `help`.
 
 ---
 
@@ -61,34 +86,11 @@ Every heuristic — canonicalize, dedup, sessionize, cluster, decay — is math 
 
 ---
 
-## Prerequisites
-
-- **Node ≥ 22.5** (uses the built-in `node:sqlite`) and **pnpm**.
-- Optional — a **Weaviate Engram** project + API key for the memory layer. Without it, Tab Zero runs in **local mode**: trails, keyword search, categories, gated interests, and "your week in tabs" all still work.
-- Optional — an **LLM** for prose. If `OPENROUTER_API_KEY` is set it's used; otherwise Tab Zero shells out to a local **`claude`** (`claude -p`) if installed; otherwise it falls back to heuristic labels/summaries.
-
----
-
-## Quick start
-
-```bash
-npx github:prajjwalyd/TabZero
-```
-
-Tab Zero isn't on npm — `npx` installs straight from this repo and a `prepare` script compiles it on your machine. A wizard stages the extension, takes a [Weaviate Engram key](docs/engram.md), and starts the daemon. Then:
-
-1. Open `chrome://extensions` (Chrome, Edge, Brave, Arc…) and enable **Developer mode**
-2. **Load unpacked** → the folder the wizard prints (`~/.tabzero/extension`)
-3. Pin **Tab Zero**, click it, and browse a bit — trails appear automatically
-
-No key needed to start. Setup also offers to install `tabzero` as a bare command, so after that it's just
-`tabzero start` · `key` · `path` · `help`.
-
 ### Updating
 
 | Component | Process |
 |---|---|
-| Daemon + CLI | re-run `npx github:prajjwalyd/TabZero` — npx re-resolves the git ref, so you always get the newest commit |
+| Daemon + CLI | `npm i -g tabzero@latest`, or `npx tabzero@latest` — the `@latest` matters, since npx reuses whatever it cached for a bare spec |
 | Extension | **not automatic** — `tabzero setup` re-stages it, then hit ↻ at `chrome://extensions` |
 
 Unpacked extensions never auto-update, so move both halves together: a new daemon behind an old extension is the one combination that breaks. `GET /health` reports `version` if you want to check.
@@ -162,7 +164,7 @@ Try it with any agent: _"resurrect my GPU pricing research"_ · _"what's my most
 
 Env vars (all optional). A real environment variable always wins; otherwise they load from `.env` — at the
 repo root when you're running a checkout, from `~/.tabzero/.env` when installed. Which one applies depends on
-where the *code* lives, not which directory you launch from, so `npx github:prajjwalyd/TabZero` inside a clone
+where the *code* lives, not which directory you launch from, so `npx tabzero` inside a clone
 still uses `~/.tabzero`.
 
 | Var | Default | Purpose |
@@ -171,7 +173,7 @@ still uses `~/.tabzero`.
 | `OPENROUTER_API_KEY` | — | Use OpenRouter for the LLM instead of local `claude` |
 | `OPENROUTER_MODEL` | `deepseek/deepseek-v4-flash` | Chat model when using OpenRouter |
 | `TABZERO_CLAUDE_MODEL` | `haiku` | Model alias for the local `claude -p` path |
-| `TABZERO_USER_ID` | _(generated)_ | Pin the user / Engram scope; bump it for a clean slate |
+| `TABZERO_USER_ID` | _(asked at setup)_ | The scope for every trail and Engram memory. Set it with `tabzero user <name>`; changing it starts an empty memory and leaves the old scope intact |
 | `TABZERO_TRAIL_TOPIC` | `TrailSummary` | Match a differently-named recap topic |
 | `TABZERO_INTEREST_TOPIC` | `ResearchInterest` | Match a differently-named interest topic |
 | `TABZERO_PORT` | `8787` | Daemon port — also set `BACKEND` in `extension/src/config.ts` and rebuild |

@@ -418,3 +418,42 @@ test('a description matches no label and goes to semantic search', () => {
   assert.equal(pickByLabel(REFS, 'that trip I was planning').kind, 'none');
   assert.equal(pickByLabel(REFS, '   ').kind, 'none', 'empty input is not a match for everything');
 });
+
+// ---- naming the memory scope ----
+//
+// user_id partitions everything: trails, Engram memories, interests. Unset, db.ts mints `u_<uuid>` —
+// correct but unrecognisable in the Engram console and impossible to reproduce on a second machine, which
+// is what a real install produced (`user: u_26c82533-5771-41d6-90aa-513cd39217c6`). Setup now asks.
+const { isValidUserId, normalizeUserId, suggestUserId } = await import('../src/core/user-id.js');
+
+test('the default comes from the OS account, sanitized into something valid', () => {
+  assert.equal(suggestUserId('prajjwal'), 'prajjwal');
+  assert.equal(suggestUserId('Ada Lovelace'), 'ada-lovelace', 'spaces are not allowed in the id');
+  assert.equal(suggestUserId('DOMAIN\\jsmith'), 'domain-jsmith', 'a Windows account is still usable');
+  // A default that fails validation is worse than no default: these must fall back, not be offered.
+  assert.equal(suggestUserId('_www'), 'www', 'must start alphanumeric');
+  assert.equal(suggestUserId('!!'), 'me');
+  assert.equal(suggestUserId(''), 'me');
+  assert.equal(suggestUserId(undefined), 'me');
+});
+
+test('every suggestion it can produce is one the validator accepts', () => {
+  // The invariant that matters — the prompt prefills this value, so an invalid suggestion is a dead end.
+  for (const raw of ['prajjwal', 'Ada Lovelace', 'DOMAIN\\jsmith', '_www', '!!', '', 'x', 'É', 'a'.repeat(200)]) {
+    assert.ok(isValidUserId(suggestUserId(raw)), `suggestion for ${JSON.stringify(raw)} was rejected`);
+  }
+});
+
+test('validation is conservative — this value goes into URLs and an Engram scope', () => {
+  assert.ok(isValidUserId('prajjwal'));
+  assert.ok(isValidUserId('team.weaviate-1_a'));
+  assert.ok(!isValidUserId('a'), 'one character is too short to be a scope');
+  assert.ok(!isValidUserId('-nope'), 'must start alphanumeric');
+  assert.ok(!isValidUserId('has space'));
+  assert.ok(!isValidUserId('has/slash'), 'it is interpolated into a URL path');
+  assert.ok(!isValidUserId('a'.repeat(65)));
+});
+
+test('what the user types is stored in one canonical form', () => {
+  assert.equal(normalizeUserId('  Prajjwal  '), 'prajjwal', 'so two spellings are never two scopes');
+});
